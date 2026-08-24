@@ -482,7 +482,79 @@ app.get('/api/health', (req, res) => {
 // ============================================================
 // Error handling
 // ============================================================
+// ============================================================
+// Dashboard Endpoints
+// ============================================================
 
+// GET /api/stats - Dashboard statistics
+app.get('/api/stats', async (req, res) => {
+  try {
+    const { data: businesses } = await supabase.from('businesses').select('count').eq('verified', true);
+    const { data: users } = await supabase.from('verification_activity').select('count');
+    const { data: payments } = await supabase.from('payments').select('amount').eq('status', 'completed');
+    
+    const monthlyRevenue = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+    
+    res.json({
+      totalUsers: users.length || 0,
+      totalBusinesses: businesses.length || 0,
+      monthlyRevenue: monthlyRevenue,
+      checksThisMonth: users.length || 0,
+    });
+  } catch (error) {
+    console.error('Error fetching stats:', error);
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+});
+
+// GET /api/businesses - List all businesses
+app.get('/api/businesses', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('businesses')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    res.json(data || []);
+  } catch (error) {
+    console.error('Error fetching businesses:', error);
+    res.status(500).json({ error: 'Failed to fetch businesses' });
+  }
+});
+
+// GET /api/users - List all users
+app.get('/api/users', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('verification_activity')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    
+    if (error) throw error;
+    res.json(data || []);
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// GET /api/payments - List all payments
+app.get('/api/payments', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('payments')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    res.json(data || []);
+  } catch (error) {
+    console.error('Error fetching payments:', error);
+    res.status(500).json({ error: 'Failed to fetch payments' });
+  }
+});
 // Payment endpoints
 app.use('/api/payments', paymentRoutes);
 
