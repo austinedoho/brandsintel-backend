@@ -1,0 +1,33 @@
+{
+  "name": "brandsintel-backend",
+  "version": "1.0.0",
+  "description": "BrandsIntel - AI-powered business trust verification engine for Nigeria",
+  "main": "brandsintel-backend.js",
+  "scripts": {
+    "start": "node brandsintel-backend.js",
+    "dev": "nodemon brandsintel-backend.js"
+  },
+  "keywords": [
+    "verification",
+    "trust",
+    "fraud",
+    "nigeria",
+    "business"
+  ],
+  "author": "BrandsIntel",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "@supabase/supabase-js": "^2.38.0",
+    "@anthropic-ai/sdk": "^0.9.0",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": "18.0.0"
+  }
+}
