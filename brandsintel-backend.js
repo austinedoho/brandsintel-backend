@@ -23,9 +23,15 @@ app.use(express.json());
 // Initialize clients
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-);
-const claude = new Anthropic({
+  process.env.SUPABASE_KEY,
+  {
+    realtime: {
+      params: {
+        eventsPerSecond: 0,
+      },
+    },
+  }
+);const claude = new Anthropic({
   apiKey: process.env.CLAUDE_API_KEY,
 });
 
