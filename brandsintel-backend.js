@@ -27,7 +27,7 @@ const supabase = createClient(
   {
     realtime: {
       params: {
-        eventsPerSecond: 10,
+        eventsPerSecond: 0,
       },
     },
   }
