@@ -31,10 +31,11 @@ const supabase = createClient(
       },
     },
   }
-);const claude = new Anthropic({
+);
+
+const claude = new Anthropic({
   apiKey: process.env.CLAUDE_API_KEY,
 });
-
 // ============================================================
 // CORE: Generate Risk Assessment with Claude
 // ============================================================
