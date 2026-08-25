@@ -433,6 +433,7 @@ app.get('/api/check-rate-limit/:phoneNumber', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 /**
  * POST /api/verify-payment
  * Payment account risk verification
@@ -636,9 +637,6 @@ app.get('/api/health', (req, res) => {
 });
 
 // ============================================================
-// Error handling
-// ============================================================
-// ============================================================
 // Dashboard Endpoints
 // ============================================================
 
@@ -716,6 +714,375 @@ app.get('/api/payments', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch payments' });
   }
 });
+
+// ============================================================
+// COMPANY RESEARCH ROUTES (NEW - BRANDSINTEL 2.0)
+// ============================================================
+
+/**
+ * GET /api/companies/search
+ * Search companies by name, business name, or CAC number
+ */
+app.get('/api/companies/search', async (req, res) => {
+  try {
+    const { q, limit = 10, offset = 0 } = req.query;
+
+    if (!q || q.trim().length < 2) {
+      return res.status(400).json({ error: 'Search query must be at least 2 characters' });
+    }
+
+    // Search companies by name, business name, or CAC number
+    const { data: companies, error } = await supabase
+      .from('companies')
+      .select('id, name, business_name, cac_number, trust_score, verification_status, address, website, phone, email, industry')
+      .or(`name.ilike.%${q}%,business_name.ilike.%${q}%,cac_number.ilike.%${q}%`)
+      .order('trust_score', { ascending: false })
+      .limit(limit)
+      .range(offset, offset + limit - 1);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      results: companies || [],
+      total: companies?.length || 0,
+      query: q
+    });
+  } catch (error) {
+    console.error('Search error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * GET /api/companies/:companyId
+ * Get complete company profile with all details
+ */
+app.get('/api/companies/:companyId', async (req, res) => {
+  try {
+    const { companyId } = req.params;
+
+    // Get company details
+    const { data: company, error: companyError } = await supabase
+      .from('companies')
+      .select('*')
+      .eq('id', companyId)
+      .single();
+
+    if (companyError || !company) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Company not found' 
+      });
+    }
+
+    // Get directors
+    const { data: directors } = await supabase
+      .from('company_directors')
+      .select('name, position, email, phone')
+      .eq('company_id', companyId);
+
+    // Get financials (last 3 years)
+    const { data: financials } = await supabase
+      .from('company_financials')
+      .select('year, revenue, profit, employees')
+      .eq('company_id', companyId)
+      .order('year', { ascending: false })
+      .limit(3);
+
+    // Get news mentions
+    const { data: news } = await supabase
+      .from('news_mentions')
+      .select('title, source, url, published_date')
+      .eq('company_id', companyId)
+      .order('published_date', { ascending: false })
+      .limit(5);
+
+    res.json({
+      success: true,
+      company: {
+        ...company,
+        directors: directors || [],
+        financials: financials || [],
+        news: news || []
+      }
+    });
+  } catch (error) {
+    console.error('Profile error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * GET /api/companies/cac/:cacNumber
+ * Search company by CAC number
+ */
+app.get('/api/companies/cac/:cacNumber', async (req, res) => {
+  try {
+    const { cacNumber } = req.params;
+
+    const { data: company, error } = await supabase
+      .from('companies')
+      .select('*')
+      .eq('cac_number', cacNumber)
+      .single();
+
+    if (error || !company) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Company not found' 
+      });
+    }
+
+    res.json({
+      success: true,
+      company
+    });
+  } catch (error) {
+    console.error('CAC search error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * POST /api/companies/verify-request
+ * Handle verification requests from WhatsApp/web
+ */
+app.post('/api/companies/verify-request', async (req, res) => {
+  try {
+    const { company_name, phone_number } = req.body;
+
+    if (!company_name || !phone_number) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Company name and phone required' 
+      });
+    }
+
+    // Log the verification request
+    await supabase
+      .from('verifications')
+      .insert([
+        {
+          phone_number,
+          search_query: company_name,
+          search_type: 'company'
+        }
+      ]);
+
+    // Search for the company
+    const { data: companies } = await supabase
+      .from('companies')
+      .select('id, name, trust_score, verification_status, cac_number, address, website')
+      .or(`name.ilike.%${company_name}%,business_name.ilike.%${company_name}%`)
+      .limit(1);
+
+    if (!companies || companies.length === 0) {
+      return res.json({
+        success: true,
+        found: false,
+        message: '❌ Company not found. It may be unregistered or the name might be incorrect.'
+      });
+    }
+
+    const company = companies[0];
+
+    // Determine trust level message
+    let trustMessage = '';
+    if (company.trust_score >= 90) {
+      trustMessage = '✅ VERIFIED - High Trust';
+    } else if (company.trust_score >= 70) {
+      trustMessage = '🟡 CAUTION - Medium Trust';
+    } else {
+      trustMessage = '⚠️ ALERT - Low Trust';
+    }
+
+    res.json({
+      success: true,
+      found: true,
+      company: {
+        name: company.name,
+        trust_score: company.trust_score || 0,
+        trust_message: trustMessage,
+        status: company.verification_status,
+        cac_number: company.cac_number,
+        address: company.address,
+        website: company.website
+      }
+    });
+  } catch (error) {
+    console.error('Verify request error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * GET /api/companies/:companyId/stats
+ * Get statistics for a company
+ */
+app.get('/api/companies/:companyId/stats', async (req, res) => {
+  try {
+    const { companyId } = req.params;
+
+    // Get company stats
+    const { data: company } = await supabase
+      .from('companies')
+      .select('trust_score, total_reviews, average_rating, fraud_reports')
+      .eq('id', companyId)
+      .single();
+
+    if (!company) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Company not found' 
+      });
+    }
+
+    // Get total verifications for this company
+    const { data: verifications } = await supabase
+      .from('verifications')
+      .select('id')
+      .eq('result_id', companyId);
+
+    res.json({
+      success: true,
+      stats: {
+        company_id: companyId,
+        trust_score: company?.trust_score || 0,
+        total_reviews: company?.total_reviews || 0,
+        average_rating: company?.average_rating || 0,
+        total_verifications: verifications?.length || 0,
+        fraud_reports: company?.fraud_reports || 0
+      }
+    });
+  } catch (error) {
+    console.error('Stats error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * POST /api/companies/:companyId/reviews
+ * Add a review for a company
+ */
+app.post('/api/companies/:companyId/reviews', async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const { rating, comment, reviewer_phone } = req.body;
+
+    if (!rating || !reviewer_phone) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Rating and phone number required' 
+      });
+    }
+
+    if (rating < 1 || rating > 5) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Rating must be between 1 and 5' 
+      });
+    }
+
+    // Insert review
+    const { data: review, error } = await supabase
+      .from('seller_reviews')
+      .insert([
+        {
+          seller_id: companyId,
+          rating,
+          comment,
+          reviewer_phone,
+          verified_purchase: false
+        }
+      ]);
+
+    if (error) throw error;
+
+    // Get all reviews to calculate new average
+    const { data: allReviews } = await supabase
+      .from('seller_reviews')
+      .select('rating')
+      .eq('seller_id', companyId);
+
+    // Calculate average
+    if (allReviews && allReviews.length > 0) {
+      const avgRating = (allReviews.reduce((sum, r) => sum + r.rating, 0) / allReviews.length).toFixed(2);
+      
+      // Update company with new average
+      await supabase
+        .from('companies')
+        .update({
+          average_rating: parseFloat(avgRating),
+          total_reviews: allReviews.length
+        })
+        .eq('id', companyId);
+    }
+
+    res.json({
+      success: true,
+      message: 'Review added successfully! Thank you for helping others.',
+      review
+    });
+  } catch (error) {
+    console.error('Review error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * GET /api/companies/trending/top
+ * Get top verified companies by trust score
+ */
+app.get('/api/companies/trending/top', async (req, res) => {
+  try {
+    const { limit = 20 } = req.query;
+
+    const { data: companies, error } = await supabase
+      .from('companies')
+      .select('id, name, trust_score, industry, website, average_rating, total_reviews')
+      .eq('verification_status', 'verified')
+      .order('trust_score', { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      companies: companies || [],
+      total: companies?.length || 0
+    });
+  } catch (error) {
+    console.error('Trending error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// ============================================================
+// Route Handlers
+// ============================================================
+
 // Payment endpoints
 app.use('/api/payments', paymentRoutes);
 
@@ -739,6 +1106,9 @@ app.listen(PORT, () => {
   console.log(`🚀 BrandsIntel API running on port ${PORT}`);
   console.log(`📊 Verification endpoint: POST http://localhost:${PORT}/api/verify`);
   console.log(`💳 Payment check: POST http://localhost:${PORT}/api/verify-payment`);
+  console.log(`🔍 Company search: GET http://localhost:${PORT}/api/companies/search?q=jumia`);
+  console.log(`📋 Company profile: GET http://localhost:${PORT}/api/companies/[COMPANY_ID]`);
+  console.log(`⭐ Trending companies: GET http://localhost:${PORT}/api/companies/trending/top`);
 });
 
 module.exports = app;
