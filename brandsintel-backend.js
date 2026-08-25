@@ -21,11 +21,17 @@ app.use(cors());
 app.use(express.json());
 
 // Initialize clients
+const WebSocket = require('ws');
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-);s
-const claude = new Anthropic({
+  process.env.SUPABASE_KEY,
+  {
+    realtime: {
+      transport: WebSocket
+    }
+  }
+);const claude = new Anthropic({
   apiKey: process.env.CLAUDE_API_KEY,
 });
 // ============================================================
