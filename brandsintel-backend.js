@@ -31,9 +31,12 @@ const supabase = createClient(
       transport: WebSocket
     }
   }
-);const claude = new Anthropic({
+);
+
+const claude = new Anthropic({
   apiKey: process.env.CLAUDE_API_KEY,
 });
+
 // ============================================================
 // CORE: Generate Risk Assessment with Claude
 // ============================================================
@@ -716,6 +719,7 @@ app.get('/api/payments', async (req, res) => {
 
 // ============================================================
 // COMPANY RESEARCH ROUTES (NEW - BRANDSINTEL 2.0)
+// ROUTES ARE ORDERED: SPECIFIC FIRST, THEN GENERIC
 // ============================================================
 
 /**
@@ -757,8 +761,73 @@ app.get('/api/companies/search', async (req, res) => {
 });
 
 /**
+ * GET /api/companies/trending/top
+ * Get top verified companies by trust score
+ */
+app.get('/api/companies/trending/top', async (req, res) => {
+  try {
+    const { limit = 20 } = req.query;
+
+    const { data: companies, error } = await supabase
+      .from('companies')
+      .select('id, name, trust_score, industry, website, average_rating, total_reviews')
+      .eq('verification_status', 'verified')
+      .order('trust_score', { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      companies: companies || [],
+      total: companies?.length || 0
+    });
+  } catch (error) {
+    console.error('Trending error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * GET /api/companies/cac/:cacNumber
+ * Search company by CAC number - MUST COME BEFORE :companyId ROUTE
+ */
+app.get('/api/companies/cac/:cacNumber', async (req, res) => {
+  try {
+    const { cacNumber } = req.params;
+
+    const { data: company, error } = await supabase
+      .from('companies')
+      .select('*')
+      .eq('cac_number', cacNumber)
+      .single();
+
+    if (error || !company) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Company not found' 
+      });
+    }
+
+    res.json({
+      success: true,
+      company
+    });
+  } catch (error) {
+    console.error('CAC search error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+/**
  * GET /api/companies/:companyId
- * Get complete company profile with all details
+ * Get complete company profile with all details - GENERIC ROUTE LAST
  */
 app.get('/api/companies/:companyId', async (req, res) => {
   try {
@@ -811,40 +880,6 @@ app.get('/api/companies/:companyId', async (req, res) => {
     });
   } catch (error) {
     console.error('Profile error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-/**
- * GET /api/companies/cac/:cacNumber
- * Search company by CAC number
- */
-app.get('/api/companies/cac/:cacNumber', async (req, res) => {
-  try {
-    const { cacNumber } = req.params;
-
-    const { data: company, error } = await supabase
-      .from('companies')
-      .select('*')
-      .eq('cac_number', cacNumber)
-      .single();
-
-    if (error || !company) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Company not found' 
-      });
-    }
-
-    res.json({
-      success: true,
-      company
-    });
-  } catch (error) {
-    console.error('CAC search error:', error);
     res.status(500).json({ 
       success: false, 
       error: error.message 
@@ -1040,37 +1075,6 @@ app.post('/api/companies/:companyId/reviews', async (req, res) => {
     });
   } catch (error) {
     console.error('Review error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-/**
- * GET /api/companies/trending/top
- * Get top verified companies by trust score
- */
-app.get('/api/companies/trending/top', async (req, res) => {
-  try {
-    const { limit = 20 } = req.query;
-
-    const { data: companies, error } = await supabase
-      .from('companies')
-      .select('id, name, trust_score, industry, website, average_rating, total_reviews')
-      .eq('verification_status', 'verified')
-      .order('trust_score', { ascending: false })
-      .limit(limit);
-
-    if (error) throw error;
-
-    res.json({
-      success: true,
-      companies: companies || [],
-      total: companies?.length || 0
-    });
-  } catch (error) {
-    console.error('Trending error:', error);
     res.status(500).json({ 
       success: false, 
       error: error.message 
