@@ -1,5 +1,5 @@
 /**
- * BrandsIntel Backend API
+ * brandstrack Backend API
  * Complete verification engine with Claude AI integration
  * Deploy to: Render, Railway, or Vercel
  */
@@ -718,7 +718,7 @@ app.get('/api/payments', async (req, res) => {
 });
 
 // ============================================================
-// COMPANY RESEARCH ROUTES (NEW - BRANDSINTEL 2.0)
+// COMPANY RESEARCH ROUTES (NEW - brandstrack 2.0)
 // ROUTES ARE ORDERED: SPECIFIC FIRST, THEN GENERIC
 // ============================================================
 
@@ -1099,14 +1099,210 @@ app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
+// ==================== WHATSAPP BOT ENDPOINTS ====================
 
+/**
+ * POST /whatsapp/webhook
+ * Receive incoming WhatsApp messages
+ */
+app.post('/whatsapp/webhook', async (req, res) => {
+  try {
+    const { Body, From, To } = req.body;
+    
+    if (!Body || !From) {
+      return res.status(400).json({ error: 'Invalid request' });
+    }
+
+    // Parse the message
+    const message = Body.trim();
+    const userPhone = From.replace('whatsapp:', '');
+
+    console.log(`📱 Message from ${userPhone}: ${message}`);
+
+    // Handle different commands
+    let response = '';
+
+    if (message.toLowerCase().startsWith('check ')) {
+      // Check business: "Check Jumia"
+      const companyName = message.substring(6).trim();
+      response = await handleCheckBusiness(companyName, userPhone);
+    } 
+    else if (message.toLowerCase().startsWith('verify ')) {
+      // Verify seller: "Verify [Your Business]"
+      const businessName = message.substring(7).trim();
+      response = await handleVerifySeller(businessName, userPhone);
+    }
+    else if (message.toLowerCase().startsWith('job ')) {
+      // Check job: "Job [Company Name]"
+      const companyName = message.substring(4).trim();
+      response = await handleJobCheck(companyName, userPhone);
+    }
+    else if (message.toLowerCase() === 'help') {
+      response = handleHelpCommand();
+    }
+    else if (message.toLowerCase() === 'menu') {
+      response = handleMenuCommand();
+    }
+    else {
+      response = `Hi! 👋 I'm brandstrack Bot.\n\nCommands:\n📍 Check [company] - Verify a company\n🏢 Verify [business] - Verify your business\n💼 Job [company] - Check if job is real\n❓ Help - Show more info\n\nExample: Check Jumia`;
+    }
+
+    // Send response back via Twilio
+    await sendWhatsAppMessage(userPhone, response);
+
+    res.json({ success: true, message: 'Message processed' });
+  } catch (error) {
+    console.error('Webhook error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Handle "Check [Company]" command
+ */
+async function handleCheckBusiness(companyName, userPhone) {
+  try {
+    // Search for company
+    const { data: companies } = await supabase
+      .from('companies')
+      .select('id, name, trust_score, verification_status, cac_number, website, address')
+      .or(`name.ilike.%${companyName}%,business_name.ilike.%${companyName}%`)
+      .limit(1);
+
+    if (!companies || companies.length === 0) {
+      return `❌ ${companyName} not found in our database.\n\nTry:\n• Check Jumia\n• Check Paystack\n• Check MTN Nigeria`;
+    }
+
+    const company = companies[0];
+
+    // Log verification
+    await supabase.from('verifications').insert([{
+      phone_number: userPhone,
+      search_query: companyName,
+      search_type: 'company',
+      result_id: company.id,
+      result_trust_score: company.trust_score
+    }]);
+
+    // Determine trust message
+    let trustEmoji = '';
+    let trustText = '';
+    
+    if (company.trust_score >= 90) {
+      trustEmoji = '✅';
+      trustText = 'VERIFIED - High Trust';
+    } else if (company.trust_score >= 70) {
+      trustEmoji = '🟡';
+      trustText = 'CAUTION - Medium Trust';
+    } else {
+      trustEmoji = '⚠️';
+      trustText = 'ALERT - Low Trust';
+    }
+
+    return `${trustEmoji} *${company.name}*\n\nTrust Score: ${company.trust_score}/100\nStatus: ${trustText}\nCAC: ${company.cac_number}\nWebsite: ${company.website}\nAddress: ${company.address}`;
+  } catch (error) {
+    console.error('Check business error:', error);
+    return '⚠️ Error checking business. Try again later.';
+  }
+}
+
+/**
+ * Handle "Verify [Business]" command
+ */
+async function handleVerifySeller(businessName, userPhone) {
+  try {
+    return `🔐 *Seller Verification*\n\nTo get verified badge:\n\n1️⃣ Business name: ${businessName}\n2️⃣ Reply with your:\n   • Website\n   • WhatsApp number\n   • Email\n\nCost: ₦30,000/month\n\nReply YES to continue.`;
+  } catch (error) {
+    console.error('Verify seller error:', error);
+    return '⚠️ Error processing verification.';
+  }
+}
+
+/**
+ * Handle "Job [Company]" command
+ */
+async function handleJobCheck(companyName, userPhone) {
+  try {
+    const { data: companies } = await supabase
+      .from('companies')
+      .select('name, trust_score, verification_status')
+      .or(`name.ilike.%${companyName}%,business_name.ilike.%${companyName}%`)
+      .limit(1);
+
+    if (!companies || companies.length === 0) {
+      return `⚠️ No records found for ${companyName}.\n\nBe careful! This could be a job scam.`;
+    }
+
+    const company = companies[0];
+
+    if (company.verification_status === 'verified') {
+      return `✅ *${company.name}* is a verified company.\n\nTrust Score: ${company.trust_score}/100\n\nIt's generally safe to apply. But always verify:\n• Official email domain\n• Company website\n• Phone number`;
+    } else {
+      return `🟡 *${company.name}* - Limited information.\n\nTrust Score: ${company.trust_score}/100\n\n⚠️ Be cautious:\n• Verify company website\n• Check official email\n• Never pay upfront fees\n• Ask for interview link`;
+    }
+  } catch (error) {
+    console.error('Job check error:', error);
+    return '⚠️ Error checking job. Try again.';
+  }
+}
+
+/**
+ * Handle "Help" command
+ */
+function handleHelpCommand() {
+  return `*brandstrack Bot Help* 🤖\n\n📍 *CHECK* - Verify any company\nUsage: Check Jumia\nGets: Trust score, address, CAC\n\n🏢 *VERIFY* - Get verified seller badge\nUsage: Verify My Business\nCost: ₦30,000/month\n\n💼 *JOB* - Check if job is real\nUsage: Job Google\nGets: Company info, safety tips\n\n*Questions?* Reply MENU for more.`;
+}
+
+/**
+ * Handle "Menu" command
+ */
+function handleMenuCommand() {
+  return `*brandstrack Menu* 📋\n\n1️⃣ Check companies\n2️⃣ Verify your business\n3️⃣ Check job offers\n4️⃣ Report scams\n5️⃣ Get badges\n\nReply with a command above or type:\n• HELP - Full guide\n• STATUS - Your account\n\nPowered by brandstrack.com`;
+}
+
+/**
+ * Send WhatsApp message via Twilio
+ */
+async function sendWhatsAppMessage(toPhone, message) {
+  try {
+    // For now, just log (will use Twilio when $20 added)
+    console.log(`📤 Sending to ${toPhone}: ${message}`);
+    
+    // When you add $20, uncomment this:
+    /*
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const client = require('twilio')(accountSid, authToken);
+    
+    await client.messages.create({
+      from: `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`,
+      to: `whatsapp:${toPhone}`,
+      body: message
+    });
+    */
+  } catch (error) {
+    console.error('Send message error:', error);
+  }
+}
+
+/**
+ * GET /whatsapp/webhook
+ * Twilio validation (required for webhook setup)
+ */
+app.get('/whatsapp/webhook', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'WhatsApp webhook is ready',
+    endpoint: '/whatsapp/webhook'
+  });
+});
 // ============================================================
 // Start server
 // ============================================================
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 BrandsIntel API running on port ${PORT}`);
+  console.log(`🚀 brandstrack API running on port ${PORT}`);
   console.log(`📊 Verification endpoint: POST http://localhost:${PORT}/api/verify`);
   console.log(`💳 Payment check: POST http://localhost:${PORT}/api/verify-payment`);
   console.log(`🔍 Company search: GET http://localhost:${PORT}/api/companies/search?q=jumia`);
