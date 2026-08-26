@@ -2,6 +2,7 @@
  * brandstrack Backend API - WITH PREMIUM SYSTEM + NEWS FETCHING
  * Complete verification engine with Claude AI integration
  * Deploy to: Render, Railway, or Vercel
+ * FIXED: NEWS_API_KEY hardcoded as fallback
  */
 
 const express = require('express');
@@ -44,9 +45,11 @@ const claude = new Anthropic({
   apiKey: process.env.CLAUDE_API_KEY,
 });
 
-// News API
-const NEWS_API_KEY = process.env.NEWS_API_KEY; // 360cee0702dd4e5589f019d6f5033760
+// News API - FIXED: Hardcoded as fallback
+const NEWS_API_KEY = process.env.NEWS_API_KEY || '360cee0702dd4e5589f019d6f5033760';
 const NEWS_API_BASE = 'https://newsapi.org/v2/everything';
+
+console.log(`📰 NEWS_API_KEY Loaded: ${NEWS_API_KEY ? '✅ YES' : '❌ NO'}`);
 
 // ============================================================
 // HELPER FUNCTIONS - NEWS & SENTIMENT ANALYSIS
@@ -57,6 +60,8 @@ const NEWS_API_BASE = 'https://newsapi.org/v2/everything';
  */
 async function fetchCompanyNews(companyName) {
   try {
+    console.log(`🔍 Fetching news for: ${companyName}`);
+    
     const response = await axios.get(NEWS_API_BASE, {
       params: {
         q: companyName,
@@ -64,8 +69,11 @@ async function fetchCompanyNews(companyName) {
         sortBy: 'publishedAt',
         pageSize: 20,
         apiKey: NEWS_API_KEY
-      }
+      },
+      timeout: 5000
     });
+
+    console.log(`📰 News API Response: ${response.data.articles ? response.data.articles.length : 0} articles found`);
 
     if (response.data.articles && response.data.articles.length > 0) {
       return response.data.articles.map(article => ({
@@ -79,9 +87,11 @@ async function fetchCompanyNews(companyName) {
         sentiment: analyzeSentiment(article.title + ' ' + (article.description || ''))
       }));
     }
+    
+    console.log(`⚠️ No articles found for: ${companyName}`);
     return [];
   } catch (error) {
-    console.error('Error fetching news:', error.message);
+    console.error(`❌ Error fetching news for ${companyName}:`, error.message);
     return [];
   }
 }
@@ -952,11 +962,13 @@ app.get('/api/companies/cac/:cacNumber', async (req, res) => {
 
 /**
  * GET /api/companies/:companyId
- * Get complete company profile WITH NEWS - UPDATED
+ * Get complete company profile WITH NEWS - FIXED VERSION
  */
 app.get('/api/companies/:companyId', async (req, res) => {
   try {
     const { companyId } = req.params;
+
+    console.log(`🔎 Fetching company details for ID: ${companyId}`);
 
     // Get company details
     const { data: company, error: companyError } = await supabase
@@ -966,20 +978,26 @@ app.get('/api/companies/:companyId', async (req, res) => {
       .single();
 
     if (companyError || !company) {
+      console.log(`❌ Company not found: ${companyId}`);
       return res.status(404).json({ 
         success: false, 
         error: 'Company not found' 
       });
     }
 
+    console.log(`✅ Found company: ${company.name}`);
+
     // Fetch news from News API
     const news = await fetchCompanyNews(company.name);
+    console.log(`📰 Fetched ${news.length} articles for ${company.name}`);
 
     // Analyze news sentiment and get summary
     const newsSummary = analyzeNewsSentiment(news);
+    console.log(`📊 News Summary: ${newsSummary.total_articles} articles, ${newsSummary.trend} trend`);
 
     // Calculate news-based trust boost
     const newsBoost = calculateNewsTrustBoost(news, newsSummary);
+    console.log(`📈 News Boost: +${newsBoost} points`);
 
     // Get directors
     const { data: directors } = await supabase
@@ -1005,6 +1023,9 @@ app.get('/api/companies/:companyId', async (req, res) => {
 
     // Use API news if available, otherwise use database
     const finalNews = news.length > 0 ? news : (newsDb || []);
+    const finalTrustScore = Math.min(100, (company.trust_score || 0) + newsBoost);
+
+    console.log(`✅ Final trust score: ${finalTrustScore} (base: ${company.trust_score}, boost: ${newsBoost})`);
 
     res.json({
       success: true,
@@ -1014,13 +1035,13 @@ app.get('/api/companies/:companyId', async (req, res) => {
         news: finalNews.slice(0, 3),
         news_summary: newsSummary,
         news_boost: newsBoost,
-        final_trust_score: Math.min(100, (company.trust_score || 0) + newsBoost),
+        final_trust_score: finalTrustScore,
         directors: directors || [],
         financials: financials || []
       }
     });
   } catch (error) {
-    console.error('Profile error:', error);
+    console.error('❌ Profile error:', error);
     res.status(500).json({ 
       success: false, 
       error: error.message 
@@ -1607,7 +1628,8 @@ app.listen(PORT, () => {
   console.log(`🚀 brandstrack API running on port ${PORT}`);
   console.log(`📊 With PREMIUM SYSTEM + NEWS FETCHING ✅`);
   console.log(`💳 Paystack integration: Ready`);
-  console.log(`📰 News API: Ready (${NEWS_API_KEY ? 'Configured' : 'Not configured'})`);
+  console.log(`📰 News API Key: ${NEWS_API_KEY ? 'CONFIGURED ✅' : 'NOT CONFIGURED ❌'}`);
+  console.log(`🔑 News API: ${NEWS_API_KEY ? NEWS_API_KEY.substring(0, 10) + '...' : 'NOT SET'}`);
 });
 
 module.exports = app;
