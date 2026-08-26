@@ -1099,12 +1099,15 @@ app.get('/api/companies/:companyId', async (req, res) => {
       company: {
         ...company,
         is_premium: company.is_premium || false,
+        premium_status: company.is_premium ? 'PREMIUM' : 'FREE',
         news: finalNews.slice(0, 3),
         news_summary: newsSummary,
         news_boost: newsBoost,
         final_trust_score: finalTrustScore,
         directors: directors || [],
-        financials: financials || []
+        financials: financials || [],
+        // PREMIUM FEATURE: News article URLs only for premium
+        can_click_news_articles: company.is_premium || false
       }
     });
   } catch (error) {
