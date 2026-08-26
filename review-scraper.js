@@ -7,9 +7,11 @@ const https = require('https');
 const { createClient } = require('@supabase/supabase-js');
 
 // Configuration
-const GOOGLE_MAPS_API_KEY = 'AIzaSyCZNSEPLQc4TtOqiAcxMwT18uyDbDwPxAI'; // Replace
-const SUPABASE_URL = 'https://edgxorvnddazggvrxixs.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVkZ3hvcnZuZGRhemdndnJ4aXhzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1MTkyNjcsImV4cCI6MjEwMzA5NTI2N30.Efuu5i6ots0bgWrtg9E81dtZcyBH9g6zZouwO3RTRCc'; // Replace
+require('dotenv').config();
+
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
 // Initialize Supabase
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
