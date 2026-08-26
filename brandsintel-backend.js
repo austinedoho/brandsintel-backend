@@ -34,17 +34,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// Initialize clients
-const WebSocket = require('ws');
-
+// Initialize Supabase client (NO WebSocket/Realtime)
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY,
-  {
-    realtime: {
-      transport: WebSocket
-    }
-  }
+  process.env.SUPABASE_KEY
 );
 
 const claude = new Anthropic({
