@@ -18,8 +18,21 @@ const businessRoutes = require('./business-routes');
 const paystack = require('./paystack-integration');
 
 const app = express();
+
+// Enable CORS - MUST BE AFTER const app = express()
 app.use(cors());
 app.use(express.json());
+
+// Additional CORS headers
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 // Initialize clients
 const WebSocket = require('ws');
@@ -371,7 +384,7 @@ app.post('/api/verify', async (req, res) => {
 
 /**
  * POST /api/email-signup
- * Store email signups
+ * Store email signups from landing page
  */
 app.post('/api/email-signup', async (req, res) => {
   try {
@@ -469,64 +482,6 @@ app.get('/api/check-rate-limit/:phoneNumber', async (req, res) => {
     });
   } catch (error) {
     console.error('Rate limit check error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-/**
- * POST /api/verify-payment
- * Payment account risk verification
- */
-app.post('/api/verify-payment', async (req, res) => {
-  try {
-    const { accountName, bank, accountNumber } = req.body;
-
-    if (!accountName || !accountNumber) {
-      return res.status(400).json({ error: 'Account name and number required' });
-    }
-
-    // Check for patterns
-    const scamIndicators = [];
-
-    if (accountName.toLowerCase().includes('operations')) {
-      scamIndicators.push('Vague account naming pattern');
-    }
-    if (accountNumber.length !== 10 && accountNumber.length !== 11) {
-      scamIndicators.push('Invalid account number format');
-    }
-    if (!['Access', 'GTBank', 'First', 'UBA', 'Zenith', 'FCMB'].some((b) => bank?.includes(b))) {
-      scamIndicators.push('Unrecognized bank');
-    }
-
-    // Check for matching business
-    const matchingBusiness = await supabase
-      .from('businesses')
-      .select('id, business_name')
-      .ilike('business_name', `%${accountName.split(' ')[0]}%`)
-      .limit(1);
-
-    const evidence = {
-      accountName,
-      bank,
-      hasMatchingBusiness: matchingBusiness.data && matchingBusiness.data.length > 0,
-      scamIndicators,
-      accountNumberLength: accountNumber.length,
-    };
-
-    const assessment = await generateRiskAssessment(evidence);
-
-    res.json({
-      accountName,
-      bank,
-      trustScore: assessment.trustScore,
-      riskLevel: assessment.riskLevel,
-      explanation: assessment.explanation,
-      keyIndicators: assessment.keyIndicators,
-      shouldBlock: assessment.riskLevel === 'high_risk',
-      timestamp: new Date(),
-    });
-  } catch (error) {
-    console.error('Payment verification error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1131,13 +1086,12 @@ app.use('/api/settings', settingsRoutes);
 
 app.use('/whatsapp', whatsappBot);
 
-
-
-
+// Error handler
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
+
 // ==================== WHATSAPP BOT ENDPOINTS ====================
 
 /**
@@ -1335,6 +1289,7 @@ app.get('/whatsapp/webhook', (req, res) => {
     endpoint: '/whatsapp/webhook'
   });
 });
+
 // ============================================================
 // Start server
 // ============================================================
@@ -1344,6 +1299,7 @@ app.listen(PORT, () => {
   console.log(`🚀 brandstrack API running on port ${PORT}`);
   console.log(`📊 Verification endpoint: POST http://localhost:${PORT}/api/verify`);
   console.log(`💳 Payment check: POST http://localhost:${PORT}/api/verify-payment`);
+  console.log(`📧 Email signup: POST http://localhost:${PORT}/api/email-signup`);
   console.log(`🔍 Company search: GET http://localhost:${PORT}/api/companies/search?q=jumia`);
   console.log(`📋 Company profile: GET http://localhost:${PORT}/api/companies/[COMPANY_ID]`);
   console.log(`⭐ Trending companies: GET http://localhost:${PORT}/api/companies/trending/top`);
