@@ -370,6 +370,42 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /**
+ * POST /api/email-signup
+ * Store email signups
+ */
+app.post('/api/email-signup', async (req, res) => {
+  try {
+    const { name, email, userType, signupDate } = req.body;
+
+    if (!name || !email || !userType) {
+      return res.status(400).json({ error: 'All fields required' });
+    }
+
+    // Store in Supabase
+    const { data, error } = await supabase
+      .from('email_signups')
+      .insert([
+        {
+          name,
+          email,
+          user_type: userType,
+          signup_date: signupDate
+        }
+      ]);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: 'Welcome! Check your email for next steps.'
+    });
+  } catch (error) {
+    console.error('Email signup error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * POST /api/verify-payment
  * Verify payment account for fraud
  */
