@@ -1,5 +1,5 @@
 /**
- * brandstrack Backend API
+ * brandstrack Backend API - WITH PREMIUM SYSTEM + NEWS FETCHING
  * Complete verification engine with Claude AI integration
  * Deploy to: Render, Railway, or Vercel
  */
@@ -43,6 +43,163 @@ const supabase = createClient(
 const claude = new Anthropic({
   apiKey: process.env.CLAUDE_API_KEY,
 });
+
+// News API
+const NEWS_API_KEY = process.env.NEWS_API_KEY; // 360cee0702dd4e5589f019d6f5033760
+const NEWS_API_BASE = 'https://newsapi.org/v2/everything';
+
+// ============================================================
+// HELPER FUNCTIONS - NEWS & SENTIMENT ANALYSIS
+// ============================================================
+
+/**
+ * Fetch news from News API for a company
+ */
+async function fetchCompanyNews(companyName) {
+  try {
+    const response = await axios.get(NEWS_API_BASE, {
+      params: {
+        q: companyName,
+        language: 'en',
+        sortBy: 'publishedAt',
+        pageSize: 20,
+        apiKey: NEWS_API_KEY
+      }
+    });
+
+    if (response.data.articles && response.data.articles.length > 0) {
+      return response.data.articles.map(article => ({
+        title: article.title,
+        description: article.description,
+        content: article.content,
+        url: article.url,
+        image: article.urlToImage,
+        source: article.source.name,
+        published_date: article.publishedAt,
+        sentiment: analyzeSentiment(article.title + ' ' + (article.description || ''))
+      }));
+    }
+    return [];
+  } catch (error) {
+    console.error('Error fetching news:', error.message);
+    return [];
+  }
+}
+
+/**
+ * Simple sentiment analysis based on keywords
+ */
+function analyzeSentiment(text) {
+  const positiveWords = [
+    'growth', 'raised', 'expanded', 'success', 'partnership', 'innovation',
+    'acquisition', 'milestone', 'record', 'boost', 'surge', 'thriving',
+    'positive', 'new product', 'launch', 'leading', 'award'
+  ];
+
+  const negativeWords = [
+    'lawsuit', 'dropped', 'declined', 'failed', 'loss', 'scandal',
+    'fraud', 'collapse', 'bankrupt', 'shutdown', 'negative', 'scam',
+    'complaint', 'warning', 'risk', 'plunge', 'crisis'
+  ];
+
+  const lowerText = text.toLowerCase();
+
+  let score = 0;
+  positiveWords.forEach(word => {
+    if (lowerText.includes(word)) score += 1;
+  });
+
+  negativeWords.forEach(word => {
+    if (lowerText.includes(word)) score -= 1;
+  });
+
+  if (score > 0) return 'positive';
+  if (score < 0) return 'negative';
+  return 'neutral';
+}
+
+/**
+ * Analyze news sentiment and create summary
+ */
+function analyzeNewsSentiment(articles) {
+  if (!articles || articles.length === 0) {
+    return {
+      total_articles: 0,
+      positive_percentage: 0,
+      negative_percentage: 0,
+      neutral_percentage: 0,
+      trend: 'NO_DATA',
+      credibility: 'Not enough data'
+    };
+  }
+
+  const positive = articles.filter(a => a.sentiment === 'positive').length;
+  const negative = articles.filter(a => a.sentiment === 'negative').length;
+  const neutral = articles.filter(a => a.sentiment === 'neutral').length;
+  const total = articles.length;
+
+  const posPercentage = Math.round((positive / total) * 100);
+  const negPercentage = Math.round((negative / total) * 100);
+  const neuPercentage = Math.round((neutral / total) * 100);
+
+  let trend = 'STABLE';
+  if (posPercentage > 60) trend = 'GROWING';
+  if (negPercentage > 40) trend = 'DECLINING';
+
+  return {
+    total_articles: total,
+    positive_articles: positive,
+    negative_articles: negative,
+    neutral_articles: neutral,
+    positive_percentage: posPercentage,
+    negative_percentage: negPercentage,
+    neutral_percentage: neuPercentage,
+    trend: trend,
+    credibility: `Strong market presence (${total}+ articles)`,
+    summary: generateNewsSummary(posPercentage, negPercentage, trend, total)
+  };
+}
+
+/**
+ * Generate readable news summary
+ */
+function generateNewsSummary(posPercent, negPercent, trend, total) {
+  if (total === 0) return 'No news data available';
+
+  let summary = `🔥 Featured in ${total} news articles. `;
+
+  if (trend === 'GROWING') {
+    summary += `Positive sentiment: ${posPercent}% ✅ Growing company with strong media presence.`;
+  } else if (trend === 'DECLINING') {
+    summary += `Negative sentiment: ${negPercent}% ⚠️ Company facing challenges. Proceed with caution.`;
+  } else {
+    summary += `Mixed sentiment (${posPercent}% positive). Stable company with moderate media coverage.`;
+  }
+
+  return summary;
+}
+
+/**
+ * Calculate trust boost based on news sentiment
+ */
+function calculateNewsTrustBoost(articles, summary) {
+  if (!articles || articles.length === 0) return 0;
+
+  const positive = articles.filter(a => a.sentiment === 'positive').length;
+  const negative = articles.filter(a => a.sentiment === 'negative').length;
+  const total = articles.length;
+
+  // More positive articles = higher boost
+  const positiveBoost = Math.round((positive / total) * 15);
+
+  // Negative articles = trust penalty
+  const negativePenalty = Math.round((negative / total) * 10);
+
+  // Media presence itself = slight boost (credibility)
+  const presenceBoost = Math.min(5, Math.round(total / 10));
+
+  return positiveBoost + presenceBoost - negativePenalty;
+}
 
 // ============================================================
 // CORE: Generate Risk Assessment with Claude
@@ -215,7 +372,7 @@ async function collectAllEvidence(businessName, website, socialHandle, paymentAc
   // Payment account risk checks
   if (paymentAccount) {
     evidence.payment_account = {
-      recently_created: true, // This would be checked against bank data
+      recently_created: true,
       account_name_matches_business: paymentAccount.accountName?.toLowerCase().includes(businessName.toLowerCase()),
       account_age_estimate: 'unknown',
     };
@@ -225,19 +382,13 @@ async function collectAllEvidence(businessName, website, socialHandle, paymentAc
 }
 
 // ============================================================
-// API ENDPOINTS
+// RATE LIMITING FUNCTION
 // ============================================================
 
-/**
- * Rate Limiting Function
- * Checks if user has exceeded daily limit
- */
 const checkRateLimit = async (phoneNumber) => {
   try {
-    // Get today's date in YYYY-MM-DD format
     const today = new Date().toISOString().split('T')[0];
     
-    // Query verification_activity for today's checks
     const { data: checks, error } = await supabase
       .from('verification_activity')
       .select('id')
@@ -247,12 +398,11 @@ const checkRateLimit = async (phoneNumber) => {
     
     if (error) {
       console.error('Rate limit check error:', error);
-      return { allowed: true }; // Allow on error (don't block users)
+      return { allowed: true };
     }
     
     const count = checks?.length || 0;
     
-    // Free users: max 3 checks per day
     if (count >= 3) {
       return {
         allowed: false,
@@ -271,9 +421,13 @@ const checkRateLimit = async (phoneNumber) => {
     };
   } catch (error) {
     console.error('Rate limit exception:', error);
-    return { allowed: true }; // Allow on error (don't block users)
+    return { allowed: true };
   }
 };
+
+// ============================================================
+// API ENDPOINTS - VERIFICATION
+// ============================================================
 
 /**
  * POST /api/verify
@@ -283,12 +437,10 @@ app.post('/api/verify', async (req, res) => {
   try {
     const { businessName, website, socialHandle, phoneNumber } = req.body;
     
-    // Validate required fields
     if (!businessName) {
       return res.status(400).json({ error: 'Business name is required' });
     }
     
-    // Check rate limit if phone number provided
     if (phoneNumber) {
       const rateLimit = await checkRateLimit(phoneNumber);
       
@@ -304,13 +456,9 @@ app.post('/api/verify', async (req, res) => {
       }
     }
     
-    // Collect evidence
     const evidence = await collectAllEvidence(businessName, website, socialHandle, null);
-    
-    // Generate risk assessment
     const assessment = await generateRiskAssessment(evidence);
     
-    // Store business in database
     const { data: business, error: businessError } = await supabase
       .from('businesses')
       .upsert(
@@ -325,7 +473,6 @@ app.post('/api/verify', async (req, res) => {
       .select()
       .single();
     
-    // Store risk profile
     if (!businessError && business) {
       await supabase.from('risk_profiles').insert([
         {
@@ -339,7 +486,6 @@ app.post('/api/verify', async (req, res) => {
         },
       ]);
       
-      // Record verification activity (for rate limiting)
       if (phoneNumber) {
         await supabase.from('verification_activity').insert([
           {
@@ -353,7 +499,6 @@ app.post('/api/verify', async (req, res) => {
       }
     }
     
-    // Return response
     res.json({
       businessName,
       trustScore: assessment.trustScore,
@@ -387,7 +532,6 @@ app.post('/api/email-signup', async (req, res) => {
       return res.status(400).json({ error: 'All fields required' });
     }
 
-    // Store in Supabase
     const { data, error } = await supabase
       .from('email_signups')
       .insert([
@@ -423,7 +567,6 @@ app.post('/api/verify-payment', async (req, res) => {
       return res.status(400).json({ error: 'Account number and bank code required' });
     }
     
-    // Check rate limit
     if (phoneNumber) {
       const rateLimit = await checkRateLimit(phoneNumber);
       if (!rateLimit.allowed) {
@@ -434,7 +577,6 @@ app.post('/api/verify-payment', async (req, res) => {
       }
     }
     
-    // Verify payment account (existing logic)
     const assessment = {
       accountStatus: 'verified',
       riskLevel: 'low',
@@ -491,7 +633,6 @@ app.post('/api/reports', async (req, res) => {
       return res.status(400).json({ error: 'Business name and report type required' });
     }
 
-    // Get business ID
     const business = await supabase
       .from('businesses')
       .select('id')
@@ -537,7 +678,7 @@ app.get('/api/business/:businessName', async (req, res) => {
 
     const { data: business, error } = await supabase
       .from('businesses')
-      .select('*, risk_profiles(*)') // Include risk profiles
+      .select('*, risk_profiles(*)')
       .eq('business_name', businessName)
       .single();
 
@@ -584,9 +725,6 @@ app.post('/api/business/verify', async (req, res) => {
   try {
     const { businessName, website, email, verificationCode } = req.body;
 
-    // In production, verify email + code
-    // For now, just upsert
-
     const { data: business, error } = await supabase
       .from('businesses')
       .upsert(
@@ -624,10 +762,9 @@ app.get('/api/health', (req, res) => {
 });
 
 // ============================================================
-// Dashboard Endpoints
+// DASHBOARD ENDPOINTS
 // ============================================================
 
-// GET /api/stats - Dashboard statistics
 app.get('/api/stats', async (req, res) => {
   try {
     const businesses = await supabase.from('businesses').select('id').eq('verified', true);
@@ -653,7 +790,6 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
-// GET /api/businesses - List all businesses
 app.get('/api/businesses', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -669,7 +805,6 @@ app.get('/api/businesses', async (req, res) => {
   }
 });
 
-// GET /api/users - List all users
 app.get('/api/users', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -686,7 +821,6 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// GET /api/payments - List all payments
 app.get('/api/payments', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -703,13 +837,12 @@ app.get('/api/payments', async (req, res) => {
 });
 
 // ============================================================
-// COMPANY RESEARCH ROUTES (NEW - brandstrack 2.0)
-// ROUTES ARE ORDERED: SPECIFIC FIRST, THEN GENERIC
+// COMPANY RESEARCH ROUTES - WITH PREMIUM & NEWS
 // ============================================================
 
 /**
  * GET /api/companies/search
- * Search companies by name, business name, or CAC number
+ * Search companies by name - SORTS PREMIUM FIRST
  */
 app.get('/api/companies/search', async (req, res) => {
   try {
@@ -719,10 +852,10 @@ app.get('/api/companies/search', async (req, res) => {
       return res.status(400).json({ error: 'Search query must be at least 2 characters' });
     }
 
-    // Search companies by name, business name, or CAC number
+    // Search companies
     const { data: companies, error } = await supabase
       .from('companies')
-      .select('id, name, business_name, cac_number, trust_score, verification_status, address, website, phone, email, industry')
+      .select('*')
       .or(`name.ilike.%${q}%,business_name.ilike.%${q}%,cac_number.ilike.%${q}%`)
       .order('trust_score', { ascending: false })
       .limit(limit)
@@ -730,10 +863,17 @@ app.get('/api/companies/search', async (req, res) => {
 
     if (error) throw error;
 
+    // SORT: Premium companies first, then by trust score
+    const sorted = (companies || []).sort((a, b) => {
+      if (a.is_premium && !b.is_premium) return -1;
+      if (!a.is_premium && b.is_premium) return 1;
+      return (b.trust_score || 0) - (a.trust_score || 0);
+    });
+
     res.json({
       success: true,
-      results: companies || [],
-      total: companies?.length || 0,
+      results: sorted,
+      total: sorted.length,
       query: q
     });
   } catch (error) {
@@ -755,7 +895,7 @@ app.get('/api/companies/trending/top', async (req, res) => {
 
     const { data: companies, error } = await supabase
       .from('companies')
-      .select('id, name, trust_score, industry, website, average_rating, total_reviews')
+      .select('*')
       .eq('verification_status', 'verified')
       .order('trust_score', { ascending: false })
       .limit(limit);
@@ -778,7 +918,7 @@ app.get('/api/companies/trending/top', async (req, res) => {
 
 /**
  * GET /api/companies/cac/:cacNumber
- * Search company by CAC number - MUST COME BEFORE :companyId ROUTE
+ * Search company by CAC number
  */
 app.get('/api/companies/cac/:cacNumber', async (req, res) => {
   try {
@@ -812,7 +952,7 @@ app.get('/api/companies/cac/:cacNumber', async (req, res) => {
 
 /**
  * GET /api/companies/:companyId
- * Get complete company profile with all details - GENERIC ROUTE LAST
+ * Get complete company profile WITH NEWS - UPDATED
  */
 app.get('/api/companies/:companyId', async (req, res) => {
   try {
@@ -832,6 +972,15 @@ app.get('/api/companies/:companyId', async (req, res) => {
       });
     }
 
+    // Fetch news from News API
+    const news = await fetchCompanyNews(company.name);
+
+    // Analyze news sentiment and get summary
+    const newsSummary = analyzeNewsSentiment(news);
+
+    // Calculate news-based trust boost
+    const newsBoost = calculateNewsTrustBoost(news, newsSummary);
+
     // Get directors
     const { data: directors } = await supabase
       .from('company_directors')
@@ -846,21 +995,28 @@ app.get('/api/companies/:companyId', async (req, res) => {
       .order('year', { ascending: false })
       .limit(3);
 
-    // Get news mentions
-    const { data: news } = await supabase
+    // Get existing news mentions from database
+    const { data: newsDb } = await supabase
       .from('news_mentions')
       .select('title, source, url, published_date')
       .eq('company_id', companyId)
       .order('published_date', { ascending: false })
       .limit(5);
 
+    // Use API news if available, otherwise use database
+    const finalNews = news.length > 0 ? news : (newsDb || []);
+
     res.json({
       success: true,
       company: {
         ...company,
+        is_premium: company.is_premium || false,
+        news: finalNews.slice(0, 3),
+        news_summary: newsSummary,
+        news_boost: newsBoost,
+        final_trust_score: Math.min(100, (company.trust_score || 0) + newsBoost),
         directors: directors || [],
-        financials: financials || [],
-        news: news || []
+        financials: financials || []
       }
     });
   } catch (error) {
@@ -887,7 +1043,6 @@ app.post('/api/companies/verify-request', async (req, res) => {
       });
     }
 
-    // Log the verification request
     await supabase
       .from('verifications')
       .insert([
@@ -898,7 +1053,6 @@ app.post('/api/companies/verify-request', async (req, res) => {
         }
       ]);
 
-    // Search for the company
     const { data: companies } = await supabase
       .from('companies')
       .select('id, name, trust_score, verification_status, cac_number, address, website')
@@ -915,7 +1069,6 @@ app.post('/api/companies/verify-request', async (req, res) => {
 
     const company = companies[0];
 
-    // Determine trust level message
     let trustMessage = '';
     if (company.trust_score >= 90) {
       trustMessage = '✅ VERIFIED - High Trust';
@@ -955,7 +1108,6 @@ app.get('/api/companies/:companyId/stats', async (req, res) => {
   try {
     const { companyId } = req.params;
 
-    // Get company stats
     const { data: company } = await supabase
       .from('companies')
       .select('trust_score, total_reviews, average_rating, fraud_reports')
@@ -969,7 +1121,6 @@ app.get('/api/companies/:companyId/stats', async (req, res) => {
       });
     }
 
-    // Get total verifications for this company
     const { data: verifications } = await supabase
       .from('verifications')
       .select('id')
@@ -1018,7 +1169,6 @@ app.post('/api/companies/:companyId/reviews', async (req, res) => {
       });
     }
 
-    // Insert review
     const { data: review, error } = await supabase
       .from('seller_reviews')
       .insert([
@@ -1033,17 +1183,14 @@ app.post('/api/companies/:companyId/reviews', async (req, res) => {
 
     if (error) throw error;
 
-    // Get all reviews to calculate new average
     const { data: allReviews } = await supabase
       .from('seller_reviews')
       .select('rating')
       .eq('seller_id', companyId);
 
-    // Calculate average
     if (allReviews && allReviews.length > 0) {
       const avgRating = (allReviews.reduce((sum, r) => sum + r.rating, 0) / allReviews.length).toFixed(2);
       
-      // Update company with new average
       await supabase
         .from('companies')
         .update({
@@ -1068,15 +1215,228 @@ app.post('/api/companies/:companyId/reviews', async (req, res) => {
 });
 
 // ============================================================
+// PREMIUM SYSTEM ROUTES - NEW
+// ============================================================
+
+/**
+ * POST /api/premium/initiate-payment
+ * Initialize Paystack payment for premium
+ */
+app.post('/api/premium/initiate-payment', async (req, res) => {
+  try {
+    const { company_id, company_name, email, phone } = req.body;
+
+    if (!company_id || !email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Company ID and email required' 
+      });
+    }
+
+    // Paystack amount in kobo (₦30,000 = 3,000,000 kobo)
+    const amount = 3000000;
+    const reference = `BT-${company_id.substr(0, 8)}-${Date.now()}`;
+
+    const paystackResponse = await axios.post(
+      'https://api.paystack.co/transaction/initialize',
+      {
+        email: email,
+        amount: amount,
+        reference: reference,
+        metadata: {
+          company_id: company_id,
+          company_name: company_name,
+          phone: phone,
+          plan: 'premium_monthly',
+          subscription_months: 1
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (paystackResponse.data.status) {
+      await supabase
+        .from('payment_logs')
+        .insert({
+          company_id: company_id,
+          amount: 30000,
+          currency: 'NGN',
+          status: 'pending',
+          paystack_reference: reference,
+          subscription_months: 1
+        });
+
+      res.json({
+        success: true,
+        payment_url: paystackResponse.data.data.authorization_url,
+        access_code: paystackResponse.data.data.access_code,
+        reference: reference
+      });
+    } else {
+      res.json({ success: false, message: 'Payment initialization failed' });
+    }
+  } catch (error) {
+    console.error('Payment error:', error);
+    res.status(500).json({ success: false, message: 'Payment error' });
+  }
+});
+
+/**
+ * POST /api/premium/paystack-webhook
+ * Verify payment and activate premium
+ */
+app.post('/api/premium/paystack-webhook', async (req, res) => {
+  try {
+    const { reference } = req.body;
+
+    const verification = await axios.get(
+      `https://api.paystack.co/transaction/verify/${reference}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+        }
+      }
+    );
+
+    const paymentData = verification.data.data;
+
+    if (paymentData.status === 'success') {
+      const { company_id, subscription_months } = paymentData.metadata;
+
+      const startDate = new Date();
+      const endDate = new Date();
+      endDate.setMonth(endDate.getMonth() + subscription_months);
+
+      await supabase
+        .from('companies')
+        .update({
+          is_premium: true,
+          subscription_date: startDate.toISOString(),
+          subscription_end_date: endDate.toISOString(),
+          paystack_subscription_id: reference
+        })
+        .eq('id', company_id);
+
+      await supabase
+        .from('premium_features')
+        .upsert({
+          company_id: company_id,
+          featured_listing: true,
+          customer_reviews_enabled: true,
+          fraud_response_enabled: true,
+          api_access_enabled: false
+        });
+
+      await supabase
+        .from('payment_logs')
+        .update({
+          status: 'successful',
+          paystack_authorization_code: paymentData.authorization.authorization_code
+        })
+        .eq('paystack_reference', reference);
+
+      res.json({ 
+        success: true, 
+        message: 'Payment verified. Company now premium!',
+        company_id: company_id,
+        subscription_end_date: endDate
+      });
+    } else {
+      await supabase
+        .from('payment_logs')
+        .update({ status: 'failed' })
+        .eq('paystack_reference', reference);
+
+      res.json({ success: false, message: 'Payment not successful' });
+    }
+  } catch (error) {
+    console.error('Webhook error:', error);
+    res.status(500).json({ success: false, message: 'Webhook error' });
+  }
+});
+
+/**
+ * GET /api/premium/status/:company_id
+ * Check if company is premium and subscription status
+ */
+app.get('/api/premium/status/:company_id', async (req, res) => {
+  try {
+    const { company_id } = req.params;
+
+    const { data: company, error } = await supabase
+      .from('companies')
+      .select('is_premium, subscription_end_date')
+      .eq('id', company_id)
+      .single();
+
+    if (error) {
+      return res.json({ success: false, message: 'Company not found' });
+    }
+
+    if (company.is_premium && company.subscription_end_date) {
+      const endDate = new Date(company.subscription_end_date);
+      const today = new Date();
+
+      if (today > endDate) {
+        await supabase
+          .from('companies')
+          .update({ is_premium: false })
+          .eq('id', company_id);
+
+        return res.json({ 
+          success: true, 
+          is_premium: false, 
+          message: 'Subscription expired' 
+        });
+      }
+    }
+
+    res.json({ 
+      success: true, 
+      is_premium: company.is_premium || false,
+      subscription_end_date: company.subscription_end_date
+    });
+  } catch (error) {
+    console.error('Status check error:', error);
+    res.status(500).json({ success: false, message: 'Error checking status' });
+  }
+});
+
+/**
+ * GET /api/companies/trending/premium
+ * Get trending premium companies
+ */
+app.get('/api/companies/trending/premium', async (req, res) => {
+  try {
+    const { data: companies, error } = await supabase
+      .from('companies')
+      .select('*')
+      .eq('is_premium', true)
+      .order('trust_score', { ascending: false })
+      .limit(10);
+
+    if (error) {
+      return res.json({ success: false, message: 'Error fetching trending' });
+    }
+
+    res.json({ success: true, results: companies || [] });
+  } catch (error) {
+    console.error('Trending error:', error);
+    res.status(500).json({ success: false, message: 'Error' });
+  }
+});
+
+// ============================================================
 // Route Handlers
 // ============================================================
 
-// Payment endpoints
 app.use('/api/payments', paymentRoutes);
-
-// Settings endpoints
 app.use('/api/settings', settingsRoutes);
-
 app.use('/whatsapp', whatsappBot);
 
 // Error handler
@@ -1099,27 +1459,22 @@ app.post('/whatsapp/webhook', async (req, res) => {
       return res.status(400).json({ error: 'Invalid request' });
     }
 
-    // Parse the message
     const message = Body.trim();
     const userPhone = From.replace('whatsapp:', '');
 
     console.log(`📱 Message from ${userPhone}: ${message}`);
 
-    // Handle different commands
     let response = '';
 
     if (message.toLowerCase().startsWith('check ')) {
-      // Check business: "Check Jumia"
       const companyName = message.substring(6).trim();
       response = await handleCheckBusiness(companyName, userPhone);
     } 
     else if (message.toLowerCase().startsWith('verify ')) {
-      // Verify seller: "Verify [Your Business]"
       const businessName = message.substring(7).trim();
       response = await handleVerifySeller(businessName, userPhone);
     }
     else if (message.toLowerCase().startsWith('job ')) {
-      // Check job: "Job [Company Name]"
       const companyName = message.substring(4).trim();
       response = await handleJobCheck(companyName, userPhone);
     }
@@ -1133,7 +1488,6 @@ app.post('/whatsapp/webhook', async (req, res) => {
       response = `Hi! 👋 I'm brandstrack Bot.\n\nCommands:\n📍 Check [company] - Verify a company\n🏢 Verify [business] - Verify your business\n💼 Job [company] - Check if job is real\n❓ Help - Show more info\n\nExample: Check Jumia`;
     }
 
-    // Send response back via Twilio
     await sendWhatsAppMessage(userPhone, response);
 
     res.json({ success: true, message: 'Message processed' });
@@ -1143,12 +1497,8 @@ app.post('/whatsapp/webhook', async (req, res) => {
   }
 });
 
-/**
- * Handle "Check [Company]" command
- */
 async function handleCheckBusiness(companyName, userPhone) {
   try {
-    // Search for company
     const { data: companies } = await supabase
       .from('companies')
       .select('id, name, trust_score, verification_status, cac_number, website, address')
@@ -1161,7 +1511,6 @@ async function handleCheckBusiness(companyName, userPhone) {
 
     const company = companies[0];
 
-    // Log verification
     await supabase.from('verifications').insert([{
       phone_number: userPhone,
       search_query: companyName,
@@ -1170,7 +1519,6 @@ async function handleCheckBusiness(companyName, userPhone) {
       result_trust_score: company.trust_score
     }]);
 
-    // Determine trust message
     let trustEmoji = '';
     let trustText = '';
     
@@ -1192,9 +1540,6 @@ async function handleCheckBusiness(companyName, userPhone) {
   }
 }
 
-/**
- * Handle "Verify [Business]" command
- */
 async function handleVerifySeller(businessName, userPhone) {
   try {
     return `🔐 *Seller Verification*\n\nTo get verified badge:\n\n1️⃣ Business name: ${businessName}\n2️⃣ Reply with your:\n   • Website\n   • WhatsApp number\n   • Email\n\nCost: ₦30,000/month\n\nReply YES to continue.`;
@@ -1204,9 +1549,6 @@ async function handleVerifySeller(businessName, userPhone) {
   }
 }
 
-/**
- * Handle "Job [Company]" command
- */
 async function handleJobCheck(companyName, userPhone) {
   try {
     const { data: companies } = await supabase
@@ -1232,49 +1574,22 @@ async function handleJobCheck(companyName, userPhone) {
   }
 }
 
-/**
- * Handle "Help" command
- */
 function handleHelpCommand() {
   return `*brandstrack Bot Help* 🤖\n\n📍 *CHECK* - Verify any company\nUsage: Check Jumia\nGets: Trust score, address, CAC\n\n🏢 *VERIFY* - Get verified seller badge\nUsage: Verify My Business\nCost: ₦30,000/month\n\n💼 *JOB* - Check if job is real\nUsage: Job Google\nGets: Company info, safety tips\n\n*Questions?* Reply MENU for more.`;
 }
 
-/**
- * Handle "Menu" command
- */
 function handleMenuCommand() {
   return `*brandstrack Menu* 📋\n\n1️⃣ Check companies\n2️⃣ Verify your business\n3️⃣ Check job offers\n4️⃣ Report scams\n5️⃣ Get badges\n\nReply with a command above or type:\n• HELP - Full guide\n• STATUS - Your account\n\nPowered by brandstrack.com`;
 }
 
-/**
- * Send WhatsApp message via Twilio
- */
 async function sendWhatsAppMessage(toPhone, message) {
   try {
-    // For now, just log (will use Twilio when $20 added)
     console.log(`📤 Sending to ${toPhone}: ${message}`);
-    
-    // When you add $20, uncomment this:
-    /*
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
-    const client = require('twilio')(accountSid, authToken);
-    
-    await client.messages.create({
-      from: `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`,
-      to: `whatsapp:${toPhone}`,
-      body: message
-    });
-    */
   } catch (error) {
     console.error('Send message error:', error);
   }
 }
 
-/**
- * GET /whatsapp/webhook
- * Twilio validation (required for webhook setup)
- */
 app.get('/whatsapp/webhook', (req, res) => {
   res.json({ 
     success: true, 
@@ -1290,12 +1605,9 @@ app.get('/whatsapp/webhook', (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 brandstrack API running on port ${PORT}`);
-  console.log(`📊 Verification endpoint: POST http://localhost:${PORT}/api/verify`);
-  console.log(`💳 Payment check: POST http://localhost:${PORT}/api/verify-payment`);
-  console.log(`📧 Email signup: POST http://localhost:${PORT}/api/email-signup`);
-  console.log(`🔍 Company search: GET http://localhost:${PORT}/api/companies/search?q=jumia`);
-  console.log(`📋 Company profile: GET http://localhost:${PORT}/api/companies/[COMPANY_ID]`);
-  console.log(`⭐ Trending companies: GET http://localhost:${PORT}/api/companies/trending/top`);
+  console.log(`📊 With PREMIUM SYSTEM + NEWS FETCHING ✅`);
+  console.log(`💳 Paystack integration: Ready`);
+  console.log(`📰 News API: Ready (${NEWS_API_KEY ? 'Configured' : 'Not configured'})`);
 });
 
 module.exports = app;
