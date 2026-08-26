@@ -13,6 +13,7 @@ require('dotenv').config();
 
 const paymentRoutes = require('./payment-routes');
 const settingsRoutes = require('./settings-routes');
+const whatsappBot = require('./whatsapp-bot');
 const businessRoutes = require('./business-routes');
 const paystack = require('./paystack-integration');
 
@@ -1092,8 +1093,10 @@ app.use('/api/payments', paymentRoutes);
 // Settings endpoints
 app.use('/api/settings', settingsRoutes);
 
-// Business endpoints
-app.use('/api/business', businessRoutes);
+app.use('/whatsapp', whatsappBot);
+
+
+
 
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
