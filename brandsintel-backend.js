@@ -52,11 +52,63 @@ const NEWS_API_BASE = 'https://newsapi.org/v2/everything';
 console.log(`📰 NEWS_API_KEY Loaded: ${NEWS_API_KEY ? '✅ YES' : '❌ NO'}`);
 
 // ============================================================
+// TRUSTED NEWS SOURCES - CREDIBILITY FILTERING
+// ============================================================
+
+const TRUSTED_NEWS_SOURCES = [
+  // International Tier-1 (High Credibility)
+  'bbc', 'bbc news', 'bbc.com', 'bbc.co.uk',
+  'reuters', 'reuters.com',
+  'bloomberg', 'bloomberg.com',
+  'techcrunch', 'techcrunch.com',
+  'the guardian', 'theguardian.com',
+  'financial times', 'ft.com',
+  'wall street journal', 'wsj.com',
+  'ap news', 'apnews.com',
+  'associated press',
+  'cnbc', 'cnbc.com',
+  'cnn', 'cnn.com',
+  'the economist',
+  'fortune', 'fortune.com',
+  
+  // Nigerian Tier-1 (High Credibility)
+  'pulse nigeria', 'pulse.ng',
+  'vanguard', 'vanguardngr.com',
+  'premium times', 'premiumtimesng.com',
+  'businessday', 'businessdayonline.com',
+  'nairametrics', 'nairametrics.com',
+  'the cable', 'thecable.ng',
+  'sahara reporters', 'saharareporters.com',
+  'leadership', 'leadership.ng',
+  'guardian ng', 'guardiannewsngr.com',
+  'brands.ng', 'brands', 'brands ng',
+  
+  // African Media
+  'the africa report',
+  'african business',
+  'venturesafrica', 'venturesafrica.com',
+  'disrupt africa',
+];
+
+/**
+ * Check if a news source is trusted
+ */
+function isTrustedSource(sourceName) {
+  if (!sourceName) return false;
+  
+  const normalizedSource = sourceName.toLowerCase().trim();
+  
+  return TRUSTED_NEWS_SOURCES.some(trusted => 
+    normalizedSource.includes(trusted) || trusted.includes(normalizedSource)
+  );
+}
+
+// ============================================================
 // HELPER FUNCTIONS - NEWS & SENTIMENT ANALYSIS
 // ============================================================
 
 /**
- * Fetch news from News API for a company
+ * Fetch news from News API for a company - WITH TRUSTED SOURCE FILTERING
  */
 async function fetchCompanyNews(companyName) {
   try {
@@ -67,16 +119,17 @@ async function fetchCompanyNews(companyName) {
         q: companyName,
         language: 'en',
         sortBy: 'publishedAt',
-        pageSize: 20,
+        pageSize: 100,  // Fetch more to have enough after filtering
         apiKey: NEWS_API_KEY
       },
       timeout: 5000
     });
 
-    console.log(`📰 News API Response: ${response.data.articles ? response.data.articles.length : 0} articles found`);
+    console.log(`📰 News API Response: ${response.data.articles ? response.data.articles.length : 0} articles found (before filtering)`);
 
     if (response.data.articles && response.data.articles.length > 0) {
-      return response.data.articles.map(article => ({
+      // Map articles
+      const allArticles = response.data.articles.map(article => ({
         title: article.title,
         description: article.description,
         content: article.content,
@@ -86,6 +139,20 @@ async function fetchCompanyNews(companyName) {
         published_date: article.publishedAt,
         sentiment: analyzeSentiment(article.title + ' ' + (article.description || ''))
       }));
+
+      // FILTER: Only keep articles from trusted sources
+      const trustedArticles = allArticles.filter(article => isTrustedSource(article.source));
+      
+      console.log(`✅ Trusted sources found: ${trustedArticles.length}/${allArticles.length} articles`);
+      
+      if (trustedArticles.length > 0) {
+        console.log(`📰 Trusted sources: ${[...new Set(trustedArticles.map(a => a.source))].join(', ')}`);
+        return trustedArticles;
+      } else {
+        console.log(`⚠️ No articles from trusted sources. Showing limited results from top sources.`);
+        // If no trusted sources, return top 3 anyway (better than nothing)
+        return allArticles.slice(0, 3);
+      }
     }
     
     console.log(`⚠️ No articles found for: ${companyName}`);
@@ -1630,6 +1697,8 @@ app.listen(PORT, () => {
   console.log(`💳 Paystack integration: Ready`);
   console.log(`📰 News API Key: ${NEWS_API_KEY ? 'CONFIGURED ✅' : 'NOT CONFIGURED ❌'}`);
   console.log(`🔑 News API: ${NEWS_API_KEY ? NEWS_API_KEY.substring(0, 10) + '...' : 'NOT SET'}`);
+  console.log(`🛡️  TRUSTED SOURCES FILTERING: ENABLED ✅`);
+  console.log(`✅ Monitoring ${TRUSTED_NEWS_SOURCES.length} trusted news outlets (including brands.ng)`);
 });
 
 module.exports = app;
