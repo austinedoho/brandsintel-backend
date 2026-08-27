@@ -9,14 +9,13 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// ============ PAYSTACK CONFIGURATION (NO HARDCODED KEYS!) ============
+// ============ PAYSTACK CONFIGURATION ============
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
 const PAYSTACK_PUBLIC = process.env.PAYSTACK_PUBLIC;
 const PAYSTACK_API = 'https://api.paystack.co';
 
 if (!PAYSTACK_SECRET) {
     console.error('❌ ERROR: PAYSTACK_SECRET not set in environment variables!');
-    console.error('Please set PAYSTACK_SECRET in Render environment variables');
 }
 
 console.log('🔑 Paystack configured from environment variables');
@@ -37,8 +36,57 @@ let appData = {
 
 let payments = [];
 let companies = {};
+let searchTracks = {}; // Track searches: { "ip_address": { date: "2026-08-27", count: 3 } }
 
 console.log('💾 Initial settings loaded:', appData.premium_monthly_price);
+
+// ============ SEARCH LIMIT FUNCTIONS ============
+function getClientIP(req) {
+    return req.headers['x-forwarded-for']?.split(',')[0] || req.connection.remoteAddress || 'unknown';
+}
+
+function getTodayDate() {
+    return new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+}
+
+function checkSearchLimit(req) {
+    const clientIP = getClientIP(req);
+    const today = getTodayDate();
+    
+    if (!searchTracks[clientIP]) {
+        searchTracks[clientIP] = { date: today, count: 0 };
+    }
+    
+    if (searchTracks[clientIP].date !== today) {
+        searchTracks[clientIP] = { date: today, count: 0 };
+    }
+    
+    const allowedSearches = appData.free_searches_per_day;
+    const currentCount = searchTracks[clientIP].count;
+    
+    return {
+        allowed: currentCount < allowedSearches,
+        remaining: Math.max(0, allowedSearches - currentCount),
+        total: allowedSearches,
+        current: currentCount
+    };
+}
+
+function incrementSearchCount(req) {
+    const clientIP = getClientIP(req);
+    const today = getTodayDate();
+    
+    if (!searchTracks[clientIP]) {
+        searchTracks[clientIP] = { date: today, count: 0 };
+    }
+    
+    if (searchTracks[clientIP].date !== today) {
+        searchTracks[clientIP] = { date: today, count: 0 };
+    }
+    
+    searchTracks[clientIP].count++;
+    console.log(`📊 Search #${searchTracks[clientIP].count} for IP: ${clientIP}`);
+}
 
 // ============ HEALTH CHECK ============
 app.get('/health', (req, res) => {
@@ -53,15 +101,14 @@ app.get('/health', (req, res) => {
             'Trust Scores',
             'News Intelligence',
             'Paystack Payments (LIVE)',
+            'Search Rate Limiting',
             'Complete Admin Dashboard',
-            'Payment Management',
-            'Company Management',
-            'Dynamic Settings'
+            'Payment Management'
         ]
     });
 });
 
-// ============ PUBLIC SETTINGS ENDPOINT (NO AUTH) ============
+// ============ PUBLIC SETTINGS ENDPOINT ============
 app.get('/api/settings/public', (req, res) => {
     console.log('📊 Public settings requested - returning price:', appData.premium_monthly_price);
     res.json({
@@ -83,8 +130,6 @@ app.get('/api/settings/public', (req, res) => {
 function verifyAdmin(req, res, next) {
     const adminKey = req.headers['x-admin-key'] || req.body.admin_key;
     const expectedKey = process.env.ADMIN_PASSWORD || 'BrandsIntel2024';
-    
-    console.log('🔐 Admin auth check');
     
     if (adminKey !== expectedKey) {
         console.log('❌ Auth failed');
@@ -122,7 +167,6 @@ app.post('/api/admin/settings/update', verifyAdmin, (req, res) => {
         if (premium_monthly_price !== undefined) {
             appData.premium_monthly_price = premium_monthly_price;
             console.log('✅ Price updated to:', premium_monthly_price);
-            process.env.PREMIUM_PRICE = premium_monthly_price;
         }
         if (free_searches_per_day !== undefined) appData.free_searches_per_day = free_searches_per_day;
         if (articles_per_company !== undefined) appData.articles_per_company = articles_per_company;
@@ -133,7 +177,7 @@ app.post('/api/admin/settings/update', verifyAdmin, (req, res) => {
         if (certificate_download_enabled !== undefined) appData.certificate_download_enabled = certificate_download_enabled;
         if (priority_support_enabled !== undefined) appData.priority_support_enabled = priority_support_enabled;
 
-        console.log('✅ Settings updated successfully:', appData.premium_monthly_price);
+        console.log('✅ Settings updated successfully');
         
         res.json({
             success: true,
@@ -146,10 +190,28 @@ app.post('/api/admin/settings/update', verifyAdmin, (req, res) => {
     }
 });
 
-// ============ COMPANY SEARCH ENDPOINT ============
+// ============ COMPANY SEARCH ENDPOINT WITH RATE LIMIT ============
 app.get('/api/companies/search', (req, res) => {
     const query = req.query.q?.toLowerCase() || '';
     console.log('🔍 Search query:', query);
+
+    // CHECK SEARCH LIMIT
+    const searchLimit = checkSearchLimit(req);
+    
+    if (!searchLimit.allowed) {
+        console.log(`❌ Search limit exceeded for IP: ${getClientIP(req)}`);
+        return res.status(429).json({ 
+            success: false,
+            error: '❌ Daily search limit exceeded!',
+            message: `You have used all ${searchLimit.total} free searches today. Upgrade to Premium to get unlimited searches!`,
+            limit_info: {
+                free_searches_per_day: searchLimit.total,
+                searches_used_today: searchLimit.current,
+                searches_remaining: 0,
+                reset_time: 'Tomorrow at 12:00 AM'
+            }
+        });
+    }
 
     if (!query) {
         return res.json({ 
@@ -158,6 +220,9 @@ app.get('/api/companies/search', (req, res) => {
             message: 'Please provide a search query'
         });
     }
+
+    // INCREMENT SEARCH COUNT
+    incrementSearchCount(req);
 
     const mockCompanies = {
         'mtn': {
@@ -229,28 +294,29 @@ app.get('/api/companies/search', (req, res) => {
     res.json({
         success: true,
         results: results,
-        total: results.length
+        total: results.length,
+        limit_info: {
+            searches_used_today: searchLimit.current + 1,
+            searches_remaining: searchLimit.remaining - 1,
+            free_searches_per_day: searchLimit.total
+        }
     });
 });
 
 // ============ PAYSTACK PAYMENT ENDPOINTS ============
-
-// INITIATE PAYMENT - Frontend calls this
 app.post('/api/premium/initiate-payment', async (req, res) => {
     try {
-        const { email, company_id, company_name, subscription_months = 1 } = req.body;
+        const { email, subscription_months = 1 } = req.body;
         
         console.log(`💳 Payment initiation request:`, {
             email,
-            company_id,
-            company_name,
             amount: appData.premium_monthly_price * subscription_months
         });
 
-        if (!email || !company_id) {
+        if (!email) {
             return res.status(400).json({ 
                 success: false,
-                error: 'Email and company_id required' 
+                error: 'Email required' 
             });
         }
 
@@ -261,9 +327,9 @@ app.post('/api/premium/initiate-payment', async (req, res) => {
             });
         }
 
-        const amount = appData.premium_monthly_price * subscription_months * 100; // Paystack uses kobo
+        const amount = appData.premium_monthly_price * subscription_months * 100;
+        const company_id = 'consumer_' + Date.now();
 
-        // Call Paystack API to initialize transaction
         const paystackResponse = await axios.post(
             `${PAYSTACK_API}/transaction/initialize`,
             {
@@ -271,9 +337,9 @@ app.post('/api/premium/initiate-payment', async (req, res) => {
                 amount: amount,
                 metadata: {
                     company_id: company_id,
-                    company_name: company_name,
                     subscription_months: subscription_months,
-                    currency: appData.premium_currency
+                    currency: appData.premium_currency,
+                    type: 'premium_consumer'
                 }
             },
             {
@@ -292,12 +358,10 @@ app.post('/api/premium/initiate-payment', async (req, res) => {
 
             console.log(`🎯 Payment initialized - Reference: ${reference}`);
 
-            // Store payment record
             payments.push({
                 reference: reference,
                 email: email,
                 company_id: company_id,
-                company_name: company_name,
                 amount: appData.premium_monthly_price * subscription_months,
                 status: 'pending',
                 timestamp: new Date().toISOString()
@@ -322,7 +386,6 @@ app.post('/api/premium/initiate-payment', async (req, res) => {
     }
 });
 
-// VERIFY PAYMENT - Frontend calls this after payment
 app.post('/api/premium/verify-payment', async (req, res) => {
     try {
         const { reference } = req.body;
@@ -343,7 +406,6 @@ app.post('/api/premium/verify-payment', async (req, res) => {
             });
         }
 
-        // Call Paystack to verify
         const verifyResponse = await axios.get(
             `${PAYSTACK_API}/transaction/verify/${reference}`,
             {
@@ -362,9 +424,7 @@ app.post('/api/premium/verify-payment', async (req, res) => {
             if (paymentRecord) {
                 paymentRecord.status = 'successful';
                 const company_id = data.metadata.company_id;
-                const company_name = data.metadata.company_name;
 
-                // Mark company as premium
                 if (!companies[company_id]) {
                     companies[company_id] = {};
                 }
@@ -372,7 +432,7 @@ app.post('/api/premium/verify-payment', async (req, res) => {
                 companies[company_id].subscription_date = new Date().toISOString();
                 companies[company_id].paystack_reference = reference;
 
-                console.log(`✅ Company ${company_id} upgraded to premium!`);
+                console.log(`✅ Premium access activated for ${company_id}!`);
             }
 
             res.json({
@@ -400,7 +460,6 @@ app.post('/api/premium/verify-payment', async (req, res) => {
     }
 });
 
-// PAYSTACK WEBHOOK - Paystack calls this
 app.post('/api/premium/paystack-webhook', (req, res) => {
     try {
         const event = req.body;
@@ -408,11 +467,8 @@ app.post('/api/premium/paystack-webhook', (req, res) => {
 
         if (event.event === 'charge.success') {
             const reference = event.data.reference;
-            const email = event.data.customer.email;
-            
-            console.log(`✅ Webhook: Payment successful for ${email} - ${reference}`);
+            console.log(`✅ Webhook: Payment successful - ${reference}`);
 
-            // Update payment record
             const paymentRecord = payments.find(p => p.reference === reference);
             if (paymentRecord) {
                 paymentRecord.status = 'webhook_confirmed';
@@ -426,7 +482,7 @@ app.post('/api/premium/paystack-webhook', (req, res) => {
     }
 });
 
-// ============ ADMIN COMPANIES ENDPOINTS ============
+// ============ ADMIN ENDPOINTS ============
 app.get('/api/admin/companies', verifyAdmin, (req, res) => {
     res.json({
         success: true,
@@ -435,42 +491,6 @@ app.get('/api/admin/companies', verifyAdmin, (req, res) => {
     });
 });
 
-app.post('/api/admin/companies/:id/upgrade', verifyAdmin, (req, res) => {
-    try {
-        const { id } = req.params;
-        if (!companies[id]) {
-            companies[id] = {};
-        }
-        companies[id].is_premium = true;
-        console.log(`✅ Company ${id} upgraded to premium`);
-        
-        res.json({
-            success: true,
-            message: `Company ${id} upgraded to premium`
-        });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to upgrade company', details: err.message });
-    }
-});
-
-app.post('/api/admin/companies/:id/downgrade', verifyAdmin, (req, res) => {
-    try {
-        const { id } = req.params;
-        if (companies[id]) {
-            companies[id].is_premium = false;
-        }
-        console.log(`✅ Company ${id} downgraded`);
-        
-        res.json({
-            success: true,
-            message: `Company ${id} downgraded`
-        });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to downgrade company', details: err.message });
-    }
-});
-
-// ============ ADMIN PAYMENTS ENDPOINT ============
 app.get('/api/admin/payments', verifyAdmin, (req, res) => {
     const revenue = payments
         .filter(p => p.status === 'successful' || p.status === 'webhook_confirmed')
@@ -485,11 +505,11 @@ app.get('/api/admin/payments', verifyAdmin, (req, res) => {
     });
 });
 
-// ============ EMAIL SIGNUP ENDPOINT ============
+// ============ EMAIL SIGNUP ============
 app.post('/api/email-signup', (req, res) => {
     try {
-        const { name, email, userType, signupDate } = req.body;
-        console.log(`📧 Signup: ${name} (${email}) - Type: ${userType}`);
+        const { name, email, userType } = req.body;
+        console.log(`📧 Signup: ${name} (${email})`);
 
         if (!email || !name) {
             return res.status(400).json({ error: 'Name and email required' });
@@ -498,20 +518,18 @@ app.post('/api/email-signup', (req, res) => {
         res.json({
             success: true,
             message: 'Signup successful',
-            data: { name, email, userType, signupDate }
+            data: { name, email, userType }
         });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to process signup', details: err.message });
+        res.status(500).json({ error: 'Failed to process signup' });
     }
 });
 
 // ============ 404 HANDLER ============
 app.use((req, res) => {
-    console.log(`⚠️ 404 - Not found: ${req.method} ${req.path}`);
     res.status(404).json({
         error: 'Endpoint not found',
-        path: req.path,
-        method: req.method
+        path: req.path
     });
 });
 
@@ -527,15 +545,10 @@ app.use((err, req, res, next) => {
 // ============ START SERVER ============
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`\n🚀 BrandsTrack Backend v3.0 RUNNING WITH PAYSTACK`);
-    console.log(`💳 Paystack Integration: ACTIVE`);
-    console.log(`📊 Current Premium Price: ₦${appData.premium_monthly_price}`);
-    console.log(`\n✅ Endpoints:`);
-    console.log(`   GET /health`);
-    console.log(`   GET /api/settings/public`);
-    console.log(`   POST /api/premium/initiate-payment`);
-    console.log(`   POST /api/premium/verify-payment`);
-    console.log(`   GET /api/admin/payments (auth)`);
+    console.log(`\n🚀 BrandsTrack Backend v3.0`);
+    console.log(`💳 Paystack: ACTIVE`);
+    console.log(`📊 Price: ₦${appData.premium_monthly_price}`);
+    console.log(`📈 Search Limit: ${appData.free_searches_per_day} searches/day`);
     console.log(`\n⏱️ Port: ${PORT}\n`);
 });
 
