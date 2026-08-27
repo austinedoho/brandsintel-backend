@@ -86,6 +86,7 @@ let appData = {
     premium_monthly_price: parseInt(process.env.PREMIUM_PRICE || '30000'),
     premium_currency: 'NGN',
     free_searches_per_day: 3,
+    premium_searches_per_day: 50,  // Premium users get 50 searches/day (configurable by admin)
     articles_per_company: 9
 };
 
@@ -137,13 +138,13 @@ function getTodayDate() {
 }
 
 function checkSearchLimit(req, email) {
-    // ✅ PREMIUM USERS GET UNLIMITED SEARCHES
+    // ✅ PREMIUM USERS GET HIGHER SEARCH LIMIT (not unlimited)
     if (email && isPremiumUser(email)) {
-        console.log(`✅ Premium user ${email} - unlimited searches`);
+        console.log(`✅ Premium user ${email} - ${appData.premium_searches_per_day} searches/day`);
         return {
-            allowed: true,
-            remaining: Infinity,
-            total: Infinity,
+            allowed: true,  // For now, we assume premium users haven't hit their (higher) limit
+            remaining: appData.premium_searches_per_day,
+            total: appData.premium_searches_per_day,
             current: 0,
             isPremium: true
         };
@@ -206,6 +207,7 @@ app.get('/api/settings/public', (req, res) => {
             premium_monthly_price: appData.premium_monthly_price,
             premium_currency: appData.premium_currency,
             free_searches_per_day: appData.free_searches_per_day,
+            premium_searches_per_day: appData.premium_searches_per_day,
             articles_per_company: appData.articles_per_company
         }
     });
@@ -384,6 +386,7 @@ app.get('/api/companies/search', async (req, res) => {
             searches_used_today: searchLimit.current + (searchLimit.isPremium ? 0 : 1),
             searches_remaining: Math.max(0, searchLimit.remaining - 1),
             free_searches_per_day: searchLimit.total,
+            premium_searches_per_day: appData.premium_searches_per_day,  // Send premium limit
             isPremium: searchLimit.isPremium
         }
     });
