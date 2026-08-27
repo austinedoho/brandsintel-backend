@@ -12,8 +12,8 @@ const PORT = process.env.PORT || 10000;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
-const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET || 'sk_live_your_paystack_key';
-const PAYSTACK_PUBLIC = process.env.PAYSTACK_PUBLIC || 'pk_live_your_paystack_key';
+const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET || 'sk_live_your_key';
+const PAYSTACK_PUBLIC = process.env.PAYSTACK_PUBLIC || 'pk_live_your_key';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123456';
 
 // ============ INITIALIZE CLIENTS ============
@@ -23,6 +23,7 @@ const newsapi = new NewsAPI(NEWS_API_KEY);
 // ============ MIDDLEWARE ============
 app.use(cors());
 app.use(express.json());
+app.use(express.static('public'));
 
 // ============ ADMIN AUTHENTICATION ============
 const verifyAdmin = (req, res, next) => {
@@ -42,6 +43,9 @@ let SETTINGS = {
     featured_listing_enabled: true,
     customer_reviews_enabled: true,
     api_access_enabled: false,
+    fraud_response_enabled: false,
+    certificate_download_enabled: true,
+    priority_support_enabled: true,
 };
 
 // ============ LOAD SETTINGS FROM SUPABASE ============
@@ -98,22 +102,14 @@ app.get('/api/admin/settings', verifyAdmin, (req, res) => {
 // ============ ADMIN: UPDATE SETTINGS ============
 app.post('/api/admin/settings/update', verifyAdmin, async (req, res) => {
     try {
-        const { 
-            premium_monthly_price,
-            free_searches_per_day,
-            articles_per_company,
-            featured_listing_enabled,
-            customer_reviews_enabled,
-            api_access_enabled
-        } = req.body;
-
+        const updates = req.body;
+        
         // Update only provided fields
-        if (premium_monthly_price) SETTINGS.premium_monthly_price = premium_monthly_price;
-        if (free_searches_per_day !== undefined) SETTINGS.free_searches_per_day = free_searches_per_day;
-        if (articles_per_company) SETTINGS.articles_per_company = articles_per_company;
-        if (featured_listing_enabled !== undefined) SETTINGS.featured_listing_enabled = featured_listing_enabled;
-        if (customer_reviews_enabled !== undefined) SETTINGS.customer_reviews_enabled = customer_reviews_enabled;
-        if (api_access_enabled !== undefined) SETTINGS.api_access_enabled = api_access_enabled;
+        Object.keys(updates).forEach(key => {
+            if (key in SETTINGS) {
+                SETTINGS[key] = updates[key];
+            }
+        });
 
         const saved = await saveSettings();
         
@@ -130,6 +126,134 @@ app.post('/api/admin/settings/update', verifyAdmin, async (req, res) => {
     }
 });
 
+// ============ ADMIN: GET ALL COMPANIES ============
+app.get('/api/admin/companies', verifyAdmin, async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('companies')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(100);
+
+        if (error) throw error;
+
+        res.json({
+            success: true,
+            companies: data || [],
+            total: data?.length || 0
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============ ADMIN: UPDATE COMPANY ============
+app.post('/api/admin/companies/:id/update', verifyAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const updates = req.body;
+
+        const { error } = await supabase
+            .from('companies')
+            .update(updates)
+            .eq('id', id);
+
+        if (error) throw error;
+
+        res.json({
+            success: true,
+            message: 'Company updated successfully'
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============ ADMIN: UPGRADE COMPANY TO PREMIUM ============
+app.post('/api/admin/companies/:id/upgrade', verifyAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { subscription_months = 1 } = req.body;
+
+        const subscription_end = new Date();
+        subscription_end.setMonth(subscription_end.getMonth() + subscription_months);
+
+        const { error } = await supabase
+            .from('companies')
+            .update({
+                is_premium: true,
+                subscription_date: new Date(),
+                subscription_end_date: subscription_end
+            })
+            .eq('id', id);
+
+        if (error) throw error;
+
+        res.json({
+            success: true,
+            message: 'Company upgraded to Premium',
+            premium_until: subscription_end
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============ ADMIN: DOWNGRADE COMPANY ============
+app.post('/api/admin/companies/:id/downgrade', verifyAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const { error } = await supabase
+            .from('companies')
+            .update({
+                is_premium: false,
+                subscription_date: null,
+                subscription_end_date: null
+            })
+            .eq('id', id);
+
+        if (error) throw error;
+
+        res.json({
+            success: true,
+            message: 'Company downgraded to Free'
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============ ADMIN: GET PAYMENT LOGS ============
+app.get('/api/admin/payments', verifyAdmin, async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('payment_logs')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(50);
+
+        if (error) throw error;
+
+        const totalRevenue = data?.reduce((sum, p) => sum + (p.amount || 0), 0) || 0;
+        const successCount = data?.filter(p => p.status === 'success').length || 0;
+        const failureCount = data?.filter(p => p.status === 'failed').length || 0;
+
+        res.json({
+            success: true,
+            payments: data || [],
+            stats: {
+                total_revenue: totalRevenue,
+                successful_payments: successCount,
+                failed_payments: failureCount,
+                total_payments: data?.length || 0
+            }
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ============ PAYSTACK: INITIATE PAYMENT ============
 app.post('/api/premium/initiate-payment', async (req, res) => {
     try {
@@ -139,7 +263,7 @@ app.post('/api/premium/initiate-payment', async (req, res) => {
             return res.status(400).json({ error: 'Email and company_id required' });
         }
 
-        const amount = SETTINGS.premium_monthly_price * subscription_months * 100; // Convert to kobo
+        const amount = SETTINGS.premium_monthly_price * subscription_months * 100;
 
         const paystack = await axios.post('https://api.paystack.co/transaction/initialize', {
             email,
@@ -149,8 +273,7 @@ app.post('/api/premium/initiate-payment', async (req, res) => {
                 company_name,
                 subscription_months,
                 subscription_type: 'premium_seller'
-            },
-            callback_url: `${process.env.FRONTEND_URL || 'https://www.brandstrack.com'}/payment-success`
+            }
         }, {
             headers: {
                 Authorization: `Bearer ${PAYSTACK_SECRET}`,
@@ -202,7 +325,6 @@ app.post('/api/premium/verify-payment', async (req, res) => {
             const subscription_end = new Date();
             subscription_end.setMonth(subscription_end.getMonth() + subscription_months);
 
-            // Update company in database
             const { error: updateError } = await supabase
                 .from('companies')
                 .update({
@@ -214,7 +336,6 @@ app.post('/api/premium/verify-payment', async (req, res) => {
                 .eq('id', company_id);
 
             if (!updateError) {
-                // Log payment
                 await supabase
                     .from('payment_logs')
                     .insert({
@@ -334,7 +455,6 @@ app.get('/api/companies/search', async (req, res) => {
 
         if (error) throw error;
 
-        // Fetch news for each company
         const results = await Promise.all(companies.map(async (company) => {
             let news = [];
             let news_summary = {};
@@ -355,7 +475,6 @@ app.get('/api/companies/search', async (req, res) => {
                     sentiment: analyzeSentiment(article.title)
                 }));
 
-                // Calculate sentiment statistics
                 const positive = news.filter(a => a.sentiment === 'positive').length;
                 const positive_percentage = news.length > 0 ? Math.round((positive / news.length) * 100) : 0;
 
@@ -432,24 +551,26 @@ app.get('/api/health', (req, res) => {
     res.json({
         status: '✅ OK',
         timestamp: new Date(),
-        version: '2.0',
+        version: '3.0',
         features: [
             'CAC Verification',
             'Trust Scores',
             'News Intelligence',
             'Paystack Payments',
-            'Admin Settings',
-            'Premium Features'
+            'Complete Admin Dashboard',
+            'Payment Management',
+            'Company Management',
+            'Dynamic Settings'
         ]
     });
 });
 
 // ============ START SERVER ============
 app.listen(PORT, () => {
-    console.log(`\n🚀 BrandsTrack Backend running on port ${PORT}`);
-    console.log(`📰 NEWS_API_KEY Loaded: ✅ YES`);
-    console.log(`💳 PAYSTACK Integration: ✅ READY`);
-    console.log(`⚙️ Admin Settings: ✅ ENABLED`);
+    console.log(`\n🚀 BrandsTrack Backend v3.0 running on port ${PORT}`);
+    console.log(`📰 NEWS_API_KEY: ✅ Loaded`);
+    console.log(`💳 PAYSTACK Integration: ✅ Ready`);
+    console.log(`🎛️ Admin Dashboard: ✅ Fully Operational`);
     console.log(`💰 Premium Price: ₦${SETTINGS.premium_monthly_price}/month\n`);
 });
 

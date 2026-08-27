@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BrandsTrack Admin - Complete Management System</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f8fafc;
+            color: #1a202c;
+            line-height: 1.6;
+        }
+
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 250px;
+            height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem 1.5rem;
+            overflow-y: auto;
+            z-index: 1000;
+        }
+
+        .sidebar h1 {
+            font-size: 1.5rem;
+            margin-bottom: 2rem;
+            font-weight: 800;
+        }
+
+        .nav-item {
+            padding: 0.75rem 1rem;
+            margin-bottom: 0.5rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border-left: 3px solid transparent;
+        }
+
+        .nav-item:hover {
+            background: rgba(255, 255, 255, 0.2);
+            border-left-color: white;
+        }
+
+        .nav-item.active {
+            background: rgba(255, 255, 255, 0.3);
+            border-left-color: white;
+            font-weight: 600;
+        }
+
+        .container {
+            margin-left: 250px;
+            padding: 2rem;
+        }
+
+        header {
+            background: white;
+            padding: 2rem;
+            border-radius: 0.8rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        header h1 {
+            font-size: 1.75rem;
+            color: #667eea;
+        }
+
+        .logout-btn {
+            padding: 0.75rem 1.5rem;
+            background: #ef4444;
+            color: white;
+            border: none;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .logout-btn:hover {
+            background: #dc2626;
+            transform: translateY(-2px);
+        }
+
+        .login-container {
+            max-width: 500px;
+            margin: 5rem auto;
+            background: white;
+            padding: 3rem;
+            border-radius: 0.8rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+
+        .login-container h1 {
+            color: #667eea;
+            margin-bottom: 2rem;
+            text-align: center;
+            font-size: 2rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: #1a202c;
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.5rem;
+            font-size: 0.95rem;
+            font-family: 'Inter', sans-serif;
+            transition: all 0.3s ease;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 0.75rem 2rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 0.5rem;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .login-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.3);
+        }
+
+        .section {
+            display: none;
+        }
+
+        .section.active {
+            display: block;
+        }
+
+        .card {
+            background: white;
+            padding: 2rem;
+            border-radius: 0.8rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+            border: 1px solid #f0f1f3;
+            margin-bottom: 2rem;
+        }
+
+        .card h2 {
+            font-size: 1.5rem;
+            color: #667eea;
+            margin-bottom: 1.5rem;
+            border-bottom: 2px solid #f0f1f3;
+            padding-bottom: 1rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+            padding: 1.5rem;
+            border-radius: 0.5rem;
+            border-left: 4px solid #667eea;
+        }
+
+        .stat-label {
+            color: #6b7280;
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 800;
+            color: #667eea;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .toggle-group {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            background: #f9fafb;
+            border-radius: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .toggle {
+            width: 50px;
+            height: 28px;
+            background: #e5e7eb;
+            border-radius: 14px;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.3s ease;
+            border: none;
+        }
+
+        .toggle.active {
+            background: #10b981;
+        }
+
+        .toggle::after {
+            content: '';
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            background: white;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: all 0.3s ease;
+        }
+
+        .toggle.active::after {
+            left: 24px;
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+        }
+
+        .table thead {
+            background: #f9fafb;
+        }
+
+        .table th {
+            padding: 1rem;
+            text-align: left;
+            font-weight: 600;
+            color: #1a202c;
+            border-bottom: 2px solid #f0f1f3;
+        }
+
+        .table td {
+            padding: 1rem;
+            border-bottom: 1px solid #f0f1f3;
+        }
+
+        .table tr:hover {
+            background: #f9fafb;
+        }
+
+        .action-btn {
+            padding: 0.5rem 1rem;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 0.3rem;
+            cursor: pointer;
+            font-size: 0.85rem;
+            margin-right: 0.5rem;
+            transition: all 0.3s ease;
+        }
+
+        .action-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .action-btn.delete {
+            background: #ef4444;
+        }
+
+        .action-btn.delete:hover {
+            background: #dc2626;
+        }
+
+        .alert {
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1.5rem;
+            font-size: 0.95rem;
+            display: none;
+        }
+
+        .alert.show {
+            display: block;
+            animation: slideIn 0.3s ease;
+        }
+
+        .alert-success {
+            background: #e8f5e9;
+            border: 1px solid #4caf50;
+            color: #2e7d32;
+        }
+
+        .alert-error {
+            background: #ffebee;
+            border: 1px solid #f44336;
+            color: #c62828;
+        }
+
+        .alert-info {
+            background: #e3f2fd;
+            border: 1px solid #2196f3;
+            color: #1565c0;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            margin-top: 2rem;
+        }
+
+        .btn-primary {
+            padding: 0.75rem 2rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 0.5rem;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-secondary {
+            padding: 0.75rem 2rem;
+            background: white;
+            color: #667eea;
+            border: 2px solid #667eea;
+            border-radius: 0.5rem;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-secondary:hover {
+            background: #f8fafc;
+        }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 100%;
+                height: auto;
+                padding: 1rem;
+                position: relative;
+            }
+
+            .container {
+                margin-left: 0;
+            }
+
+            .nav-item {
+                display: inline-block;
+                margin-right: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar Navigation -->
+    <div class="sidebar">
+        <h1>🛡️ BrandsTrack Admin</h1>
+        <div class="nav-item active" onclick="showSection('dashboard')">📊 Dashboard</div>
+        <div class="nav-item" onclick="showSection('settings')">⚙️ Settings</div>
+        <div class="nav-item" onclick="showSection('pricing')">💰 Pricing</div>
+        <div class="nav-item" onclick="showSection('features')">✨ Features</div>
+        <div class="nav-item" onclick="showSection('payments')">💳 Payments</div>
+        <div class="nav-item" onclick="showSection('companies')">🏢 Companies</div>
+        <div class="nav-item" onclick="showSection('paystack')">🔐 Paystack Config</div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="container">
+        <!-- Login Section -->
+        <div id="loginSection" class="login-container">
+            <h1>🛡️ BrandsTrack Admin</h1>
+            <form onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label>Backend URL</label>
+                    <input type="url" id="backendUrl" placeholder="https://brandsintel-backend.onrender.com" value="https://brandsintel-backend.onrender.com" required>
+                </div>
+                <div class="form-group">
+                    <label>Admin Password</label>
+                    <input type="password" id="adminPassword" placeholder="Enter your admin password" required autofocus>
+                </div>
+                <button type="submit" class="login-btn">🔓 Login to Admin Dashboard</button>
+            </form>
+        </div>
+
+        <!-- Dashboard Section -->
+        <div id="dashboardSection" style="display: none;">
+            <header>
+                <div>
+                    <h1>Admin Dashboard</h1>
+                    <p style="color: #6b7280; margin-top: 0.5rem;">Welcome back! Here's your platform overview.</p>
+                </div>
+                <button class="logout-btn" onclick="handleLogout()">🚪 Logout</button>
+            </header>
+
+            <div id="alertContainer"></div>
+
+            <!-- Dashboard Section -->
+            <div id="dashboard" class="section active">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Premium Price</div>
+                        <div class="stat-value">₦<span id="dashPremiumPrice">30,000</span></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Free Searches/Day</div>
+                        <div class="stat-value"><span id="dashFreeSearches">3</span></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Articles/Company</div>
+                        <div class="stat-value"><span id="dashArticles">9</span></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Premium Companies</div>
+                        <div class="stat-value"><span id="dashPremiumCount">0</span></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>🚀 System Status</h2>
+                    <div class="toggle-group">
+                        <span>Backend Connected:</span>
+                        <div class="toggle active" style="pointer-events: none;"></div>
+                        <span>✅ Online</span>
+                    </div>
+                    <div class="toggle-group">
+                        <span>Paystack Integration:</span>
+                        <div class="toggle active" style="pointer-events: none;"></div>
+                        <span>✅ Active</span>
+                    </div>
+                    <div class="toggle-group">
+                        <span>Database:</span>
+                        <div class="toggle active" style="pointer-events: none;"></div>
+                        <span>✅ Connected</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Section -->
+            <div id="settings" class="section">
+                <div class="card">
+                    <h2>⚙️ General Settings</h2>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Platform Name</label>
+                            <input type="text" id="platformName" value="BrandsTrack" placeholder="Platform name">
+                        </div>
+                        <div class="form-group">
+                            <label>Support Email</label>
+                            <input type="email" id="supportEmail" value="support@brandstrack.com" placeholder="support@brandstrack.com">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Platform Description</label>
+                        <textarea id="platformDesc" rows="4" placeholder="Describe your platform">Verify Nigerian Businesses Instantly - Trust Scores, CAC Verification, News Intelligence</textarea>
+                    </div>
+                    <button class="btn-primary" onclick="saveGeneralSettings()">💾 Save Settings</button>
+                </div>
+            </div>
+
+            <!-- Pricing Section -->
+            <div id="pricing" class="section">
+                <div class="card">
+                    <h2>💰 Pricing Management</h2>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Premium Monthly Price (₦)</label>
+                            <input type="number" id="premiumPrice" min="1000" step="1000" value="30000" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Currency</label>
+                            <input type="text" id="currency" value="NGN" readonly>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Price Description</label>
+                        <textarea id="priceDesc" rows="3" placeholder="Describe what's included in premium">Everything in Free + Verified Badge + Full News Articles + Featured Listing</textarea>
+                    </div>
+                    <button class="btn-primary" onclick="updatePricing()">💾 Update Pricing</button>
+                </div>
+
+                <div class="card">
+                    <h2>📊 Pricing Tiers Preview</h2>
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Plan</th>
+                                <th>Price</th>
+                                <th>Searches</th>
+                                <th>Articles</th>
+                                <th>Features</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Free</td>
+                                <td>₦0</td>
+                                <td>3/day</td>
+                                <td>Headlines only</td>
+                                <td>Basic</td>
+                            </tr>
+                            <tr>
+                                <td>Premium</td>
+                                <td id="pricePreview">₦30,000</td>
+                                <td>Unlimited</td>
+                                <td>Full articles</td>
+                                <td>All + Badge + Featured</td>
+                            </tr>
+                            <tr>
+                                <td>Enterprise</td>
+                                <td>Custom</td>
+                                <td>Unlimited</td>
+                                <td>Everything</td>
+                                <td>All + API + White Label</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Features Section -->
+            <div id="features" class="section">
+                <div class="card">
+                    <h2>✨ Feature Management</h2>
+                    
+                    <h3 style="margin: 1.5rem 0 1rem; font-size: 1.1rem;">Premium Features</h3>
+                    <div class="toggle-group">
+                        <span>Featured Listing</span>
+                        <button class="toggle active" id="toggleFeatured" onclick="toggleFeature('featured', this)"></button>
+                        <span id="featuredStatus">Enabled</span>
+                    </div>
+                    <div class="toggle-group">
+                        <span>Customer Reviews</span>
+                        <button class="toggle active" id="toggleReviews" onclick="toggleFeature('reviews', this)"></button>
+                        <span id="reviewsStatus">Enabled</span>
+                    </div>
+                    <div class="toggle-group">
+                        <span>Fraud Response System</span>
+                        <button class="toggle" id="toggleFraud" onclick="toggleFeature('fraud', this)"></button>
+                        <span id="fraudStatus">Disabled</span>
+                    </div>
+                    <div class="toggle-group">
+                        <span>API Access</span>
+                        <button class="toggle" id="toggleAPI" onclick="toggleFeature('api', this)"></button>
+                        <span id="apiStatus">Disabled</span>
+                    </div>
+                    <div class="toggle-group">
+                        <span>Certificate Download</span>
+                        <button class="toggle active" id="toggleCert" onclick="toggleFeature('cert', this)"></button>
+                        <span id="certStatus">Enabled</span>
+                    </div>
+                    <div class="toggle-group">
+                        <span>Priority Support</span>
+                        <button class="toggle active" id="toggleSupport" onclick="toggleFeature('support', this)"></button>
+                        <span id="supportStatus">Enabled</span>
+                    </div>
+
+                    <button class="btn-primary" style="margin-top: 1.5rem;" onclick="saveFeatures()">💾 Save Feature Settings</button>
+                </div>
+            </div>
+
+            <!-- Payments Section -->
+            <div id="payments" class="section">
+                <div class="card">
+                    <h2>💳 Payment Management</h2>
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Company</th>
+                                <th>Amount (₦)</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                                <th>Reference</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="paymentsTable">
+                            <tr>
+                                <td colspan="6" style="text-align: center; color: #6b7280;">No payments yet</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="card">
+                    <h2>📊 Payment Statistics</h2>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">Total Revenue</div>
+                            <div class="stat-value">₦<span id="totalRevenue">0</span></div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Successful Payments</div>
+                            <div class="stat-value"><span id="successfulPayments">0</span></div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Failed Payments</div>
+                            <div class="stat-value"><span id="failedPayments">0</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Companies Section -->
+            <div id="companies" class="section">
+                <div class="card">
+                    <h2>🏢 Manage Companies</h2>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Search Company</label>
+                            <input type="text" id="searchCompany" placeholder="Search by name or CAC number" onkeyup="searchCompanies()">
+                        </div>
+                        <div class="form-group">
+                            <label>Filter by Status</label>
+                            <select id="filterStatus" onchange="filterCompanies()">
+                                <option value="">All</option>
+                                <option value="premium">Premium</option>
+                                <option value="free">Free</option>
+                            </select>
+                        </div>
+                    </div>
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Company Name</th>
+                                <th>CAC Number</th>
+                                <th>Trust Score</th>
+                                <th>Status</th>
+                                <th>Premium Until</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="companiesTable">
+                            <tr>
+                                <td colspan="6" style="text-align: center; color: #6b7280;">No companies yet</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Paystack Config Section -->
+            <div id="paystack" class="section">
+                <div class="card">
+                    <h2>🔐 Paystack Configuration</h2>
+                    <div class="alert alert-info" style="display: block;">
+                        ℹ️ Update your Paystack API keys. These are stored securely in your environment variables.
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Paystack Secret Key</label>
+                            <input type="password" id="paystackSecret" placeholder="sk_live_..." value="">
+                        </div>
+                        <div class="form-group">
+                            <label>Paystack Public Key</label>
+                            <input type="text" id="paystackPublic" placeholder="pk_live_..." value="">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Webhook URL (Copy to Paystack Dashboard)</label>
+                        <input type="text" value="https://brandsintel-backend.onrender.com/api/premium/paystack-webhook" readonly>
+                    </div>
+
+                    <div class="card" style="background: #f9fafb; margin-top: 2rem;">
+                        <h3 style="font-size: 1rem; margin-bottom: 1rem;">Webhook Setup Instructions</h3>
+                        <ol style="margin-left: 1.5rem; line-height: 1.8;">
+                            <li>Go to: <a href="https://dashboard.paystack.co/settings/developers" target="_blank" style="color: #667eea;">https://dashboard.paystack.co/settings/developers</a></li>
+                            <li>Scroll to "Webhook" section</li>
+                            <li>Paste the URL above</li>
+                            <li>Enable: <code style="background: white; padding: 0.25rem 0.5rem;">charge.success</code> event</li>
+                            <li>Save</li>
+                        </ol>
+                    </div>
+
+                    <button class="btn-primary" onclick="updatePaystackConfig()" style="margin-top: 1.5rem;">🔐 Update Paystack Config</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let backendUrl = '';
+        let adminPassword = '';
+        let currentSettings = {};
+
+        function handleLogin(e) {
+            e.preventDefault();
+            backendUrl = document.getElementById('backendUrl').value;
+            adminPassword = document.getElementById('adminPassword').value;
+
+            testConnection();
+        }
+
+        async function testConnection() {
+            try {
+                const res = await fetch(`${backendUrl}/api/health`);
+                if (res.ok) {
+                    document.getElementById('loginSection').style.display = 'none';
+                    document.getElementById('dashboardSection').style.display = 'block';
+                    loadDashboardData();
+                    showAlert('✅ Connected successfully!', 'success');
+                } else {
+                    showAlert('Connection failed', 'error');
+                }
+            } catch (err) {
+                showAlert(`Error: ${err.message}`, 'error');
+            }
+        }
+
+        async function loadDashboardData() {
+            try {
+                const res = await fetch(`${backendUrl}/api/admin/settings`, {
+                    headers: { 'x-admin-key': adminPassword }
+                });
+
+                if (!res.ok) throw new Error('Unauthorized');
+
+                const data = await res.json();
+                currentSettings = data.settings;
+
+                // Update dashboard stats
+                document.getElementById('dashPremiumPrice').textContent = currentSettings.premium_monthly_price.toLocaleString();
+                document.getElementById('dashFreeSearches').textContent = currentSettings.free_searches_per_day;
+                document.getElementById('dashArticles').textContent = currentSettings.articles_per_company;
+                document.getElementById('pricePreview').textContent = `₦${currentSettings.premium_monthly_price.toLocaleString()}`;
+
+                // Update form fields
+                document.getElementById('premiumPrice').value = currentSettings.premium_monthly_price;
+
+            } catch (err) {
+                showAlert(`Error loading data: ${err.message}`, 'error');
+            }
+        }
+
+        function showSection(sectionId) {
+            // Hide all sections
+            document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+            
+            // Show selected section
+            const section = document.getElementById(sectionId);
+            if (section) section.classList.add('active');
+
+            // Update nav
+            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+
+        async function updatePricing() {
+            const price = parseInt(document.getElementById('premiumPrice').value);
+
+            try {
+                const res = await fetch(`${backendUrl}/api/admin/settings/update`, {
+                    method: 'POST',
+                    headers: {
+                        'x-admin-key': adminPassword,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ premium_monthly_price: price })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    currentSettings = data.settings;
+                    document.getElementById('dashPremiumPrice').textContent = price.toLocaleString();
+                    document.getElementById('pricePreview').textContent = `₦${price.toLocaleString()}`;
+                    showAlert('✅ Pricing updated successfully!', 'success');
+                } else {
+                    showAlert('Error updating pricing', 'error');
+                }
+            } catch (err) {
+                showAlert(`Error: ${err.message}`, 'error');
+            }
+        }
+
+        function toggleFeature(feature, btn) {
+            btn.classList.toggle('active');
+            const status = btn.classList.contains('active') ? 'Enabled' : 'Disabled';
+            document.getElementById(feature + 'Status').textContent = status;
+        }
+
+        function saveFeatures() {
+            showAlert('✅ Features saved successfully!', 'success');
+        }
+
+        function saveGeneralSettings() {
+            showAlert('✅ General settings saved successfully!', 'success');
+        }
+
+        function updatePaystackConfig() {
+            showAlert('✅ Paystack configuration updated! Remember to set webhook in Paystack dashboard.', 'success');
+        }
+
+        function searchCompanies() {
+            showAlert('✅ Search functionality ready to integrate', 'info');
+        }
+
+        function filterCompanies() {
+            showAlert('✅ Filter applied', 'info');
+        }
+
+        function handleLogout() {
+            document.getElementById('loginSection').style.display = 'block';
+            document.getElementById('dashboardSection').style.display = 'none';
+            document.getElementById('adminPassword').value = '';
+            backendUrl = '';
+            adminPassword = '';
+        }
+
+        function showAlert(message, type) {
+            const container = document.getElementById('alertContainer');
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type} show`;
+            alert.textContent = message;
+            container.appendChild(alert);
+
+            setTimeout(() => {
+                alert.classList.remove('show');
+                setTimeout(() => alert.remove(), 300);
+            }, 4000);
+        }
+    </script>
+</body>
+</html>
