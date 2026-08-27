@@ -2,7 +2,7 @@
 * brandstrack Backend API - WITH PREMIUM SYSTEM + NEWS FETCHING
 * Complete verification engine with Claude AI integration
 * Deploy to: Render, Railway, or Vercel
-* FIXED: NEWS_API_KEY hardcoded as fallback + is_premium in search results
+* FIXED: NEWS_API_KEY hardcoded + is_premium in search + LIVE NEWS FETCHING in search results
 */
 
 const express = require('express');
@@ -921,7 +921,7 @@ app.get('/api/payments', async (req, res) => {
 
 /**
 * GET /api/companies/search
-* Search companies by name - FIXED: NOW RETURNS is_premium FLAG
+* Search companies by name - NOW FETCHES LIVE NEWS + is_premium FLAG + CTA DISPLAY
 */
 app.get('/api/companies/search', async (req, res) => {
   try {
@@ -931,7 +931,9 @@ app.get('/api/companies/search', async (req, res) => {
       return res.status(400).json({ error: 'Search query must be at least 2 characters' });
     }
 
-    // Search companies
+    console.log(`🔍 Searching for: ${q}`);
+
+    // Search companies in database
     const { data: companies, error } = await supabase
       .from('companies')
       .select('*')
@@ -949,21 +951,53 @@ app.get('/api/companies/search', async (req, res) => {
       return (b.trust_score || 0) - (a.trust_score || 0);
     });
 
-    // ADD: is_premium flag to each result - THIS IS THE FIX!
-    const withPremiumFlag = sorted.map(company => ({
-      ...company,
-      is_premium: company.is_premium || false,
-      premium_status: company.is_premium ? 'PREMIUM' : 'FREE'
-    }));
+    console.log(`✅ Found ${sorted.length} companies in database`);
+
+    // ADD: Fetch LIVE news for each company + add is_premium flag
+    const withNewsAndPremium = await Promise.all(
+      sorted.map(async (company) => {
+        try {
+          // FETCH LIVE NEWS FROM NEWS API
+          const news = await fetchCompanyNews(company.name);
+          const newsSummary = analyzeNewsSentiment(news);
+          const newsBoost = calculateNewsTrustBoost(news, newsSummary);
+          const finalTrustScore = Math.min(100, (company.trust_score || 0) + newsBoost);
+
+          console.log(`📰 ${company.name}: ${news.length} news articles fetched`);
+
+          return {
+            ...company,
+            is_premium: company.is_premium || false,
+            premium_status: company.is_premium ? 'PREMIUM' : 'FREE',
+            news: news.slice(0, 3), // Include top 3 news articles
+            news_summary: newsSummary,
+            final_trust_score: finalTrustScore,
+            can_click_news_articles: company.is_premium || false
+          };
+        } catch (error) {
+          console.error(`⚠️ Error fetching news for ${company.name}:`, error.message);
+          return {
+            ...company,
+            is_premium: company.is_premium || false,
+            premium_status: company.is_premium ? 'PREMIUM' : 'FREE',
+            news: [],
+            news_summary: {},
+            can_click_news_articles: company.is_premium || false
+          };
+        }
+      })
+    );
+
+    console.log(`✅ Search complete: ${withNewsAndPremium.length} results with news`);
 
     res.json({
       success: true,
-      results: withPremiumFlag,
-      total: withPremiumFlag.length,
+      results: withNewsAndPremium,
+      total: withNewsAndPremium.length,
       query: q
     });
   } catch (error) {
-    console.error('Search error:', error);
+    console.error('❌ Search error:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -1711,7 +1745,8 @@ app.listen(PORT, () => {
   console.log(`🔑 News API: ${NEWS_API_KEY ? NEWS_API_KEY.substring(0, 10) + '...' : 'NOT SET'}`);
   console.log(`🛡️ TRUSTED SOURCES FILTERING: ENABLED ✅`);
   console.log(`✅ Monitoring ${TRUSTED_NEWS_SOURCES.length} trusted news outlets (including brands.ng)`);
-  console.log(`✅ Search results now return is_premium flag for premium news feature`);
+  console.log(`✅ Search endpoint now FETCHES LIVE NEWS for each company result`);
+  console.log(`✅ Premium CTA will display for FREE users with news articles`);
 });
 
 module.exports = app;
