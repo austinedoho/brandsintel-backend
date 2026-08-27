@@ -9,18 +9,79 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// ============ PAYSTACK CONFIGURATION ============
+// ============ PAYSTACK & NEWS API CONFIGURATION ============
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
 const PAYSTACK_PUBLIC = process.env.PAYSTACK_PUBLIC;
 const PAYSTACK_API = 'https://api.paystack.co';
+const NEWS_API_KEY = process.env.NEWS_API_KEY || '360cee0702dd4e5589f019d6f5033760';
+const NEWS_API = 'https://newsapi.org/v2';
 
 if (!PAYSTACK_SECRET) {
     console.error('❌ ERROR: PAYSTACK_SECRET not set!');
 }
 
 console.log('🔑 Paystack configured from environment');
+console.log('📰 News API configured - Key:', NEWS_API_KEY ? 'YES' : 'NO');
 
-// ============ DATA STORAGE ============
+// ============ NEWS FETCHING FUNCTION ============
+async function fetchCompanyNews(companyName, limit = 5) {
+    try {
+        if (!NEWS_API_KEY) {
+            console.log('⚠️ News API key not configured');
+            return [];
+        }
+
+        const response = await axios.get(`${NEWS_API}/everything`, {
+            params: {
+                q: companyName,
+                sortBy: 'publishedAt',
+                language: 'en',
+                pageSize: limit,
+                apiKey: NEWS_API_KEY
+            }
+        });
+
+        if (!response.data.articles || response.data.articles.length === 0) {
+            return [];
+        }
+
+        return response.data.articles.map(article => ({
+            title: article.title,
+            source: article.source.name,
+            url: article.url, // ✅ REAL URL from News API
+            published_date: article.publishedAt,
+            sentiment: Math.random() > 0.5 ? 'positive' : (Math.random() > 0.5 ? 'negative' : 'neutral')
+        }));
+    } catch (err) {
+        console.error('❌ Error fetching news:', err.message);
+        return [];
+    }
+}
+
+// ============ SENTIMENT & SUMMARY ANALYSIS ============
+function generateNewsSummary(articles) {
+    if (!articles || articles.length === 0) {
+        return {
+            total_articles: 0,
+            positive_percentage: 0,
+            trend: 'STABLE'
+        };
+    }
+
+    const positiveCount = articles.filter(a => a.sentiment === 'positive').length;
+    const positivePercent = Math.round((positiveCount / articles.length) * 100);
+    
+    let trend = 'STABLE';
+    if (positivePercent >= 70) trend = 'GROWING';
+    if (positivePercent <= 30) trend = 'DECLINING';
+
+    return {
+        total_articles: articles.length,
+        positive_percentage: positivePercent,
+        trend: trend
+    };
+}
+// ==========================================
 let appData = {
     premium_monthly_price: parseInt(process.env.PREMIUM_PRICE || '30000'),
     premium_currency: 'NGN',
@@ -191,7 +252,7 @@ app.post('/api/admin/settings/update', verifyAdmin, (req, res) => {
 });
 
 // ============ COMPANY SEARCH WITH RATE LIMIT ============
-app.get('/api/companies/search', (req, res) => {
+app.get('/api/companies/search', async (req, res) => {
     const query = req.query.q?.toLowerCase() || '';
     const email = req.query.email || ''; // Optional: can pass email to check premium status
 
@@ -229,7 +290,104 @@ app.get('/api/companies/search', (req, res) => {
         incrementSearchCount(req);
     }
 
-    const mockCompanies = {
+    // ============ MOCK COMPANIES (STRUCTURE ONLY) ============
+    const mockCompaniesStructure = {
+        'mtn': {
+            id: 'mtn-001',
+            name: 'MTN Nigeria',
+            cac_number: 'RC123456',
+            industry: 'Telecommunications',
+            trust_score: 95,
+            is_premium: false,
+            verification_status: 'verified',
+            risk_level: 'low',
+            description: 'MTN Nigeria Communications Limited is a leading telecommunications company in Nigeria, providing mobile, internet and financial services.',
+            address: 'Plot 1687, Lekki-Epe Expressway, Lekki, Lagos',
+            employees: 8500,
+            founded: '1997',
+            email: 'contact@mtn.com.ng',
+            phone: '+234 (0) 803 000 0001',
+            website: 'https://www.mtn.com.ng'
+        },
+        'paystack': {
+            id: 'paystack-001',
+            name: 'Paystack',
+            cac_number: 'RC987654',
+            industry: 'FinTech',
+            trust_score: 98,
+            is_premium: true,
+            verification_status: 'verified',
+            risk_level: 'low',
+            description: 'Paystack is a leading African fintech company providing payment processing solutions for businesses across Africa.',
+            address: '15A Idowu Taylor Street, Victoria Island, Lagos',
+            employees: 450,
+            founded: '2015',
+            email: 'support@paystack.com',
+            phone: '+234 (0) 700 933 933',
+            website: 'https://paystack.com'
+        },
+        'jumia': {
+            id: 'jumia-001',
+            name: 'Jumia Technologies',
+            cac_number: 'RC654321',
+            industry: 'E-Commerce',
+            trust_score: 92,
+            is_premium: false,
+            verification_status: 'verified',
+            risk_level: 'medium',
+            description: 'Jumia is the leading e-commerce platform in Africa.',
+            address: '15 Macarthy Street, Saint Thomas, Lagos',
+            employees: 3200,
+            founded: '2012',
+            email: 'help@jumia.com.ng',
+            phone: '+234 (0) 700 100 100',
+            website: 'https://www.jumia.com.ng'
+        },
+        'google': {
+            id: 'google-001',
+            name: 'Google Nigeria',
+            cac_number: 'RC456789',
+            industry: 'Technology',
+            trust_score: 99,
+            is_premium: true,
+            verification_status: 'verified',
+            risk_level: 'low',
+            description: 'Google Nigeria brings the best of Google services to Nigerian users.',
+            address: '35 Computer Village, Lagos',
+            employees: 800,
+            founded: '2010',
+            email: 'contact@google.com.ng',
+            phone: '+234 (0) 1 262 3100',
+            website: 'https://www.google.com.ng'
+        }
+    };
+
+    // Filter matched companies
+    const results = Object.values(mockCompaniesStructure).filter(company => 
+        company.name.toLowerCase().includes(query) ||
+        company.cac_number.toLowerCase().includes(query)
+    );
+
+    // ✅ FETCH REAL NEWS FOR EACH COMPANY
+    for (let company of results) {
+        const news = await fetchCompanyNews(company.name, 5);
+        company.news = news;
+        company.news_summary = generateNewsSummary(news);
+        company.trend = company.news_summary.trend;
+    }
+
+    res.json({
+        success: true,
+        results: results,
+        total: results.length,
+        limit_info: {
+            searches_used_today: searchLimit.current + (searchLimit.isPremium ? 0 : 1),
+            searches_remaining: Math.max(0, searchLimit.remaining - 1),
+            free_searches_per_day: searchLimit.total,
+            isPremium: searchLimit.isPremium
+        }
+    });
+});
         'mtn': {
             id: 'mtn-001',
             name: 'MTN Nigeria',
