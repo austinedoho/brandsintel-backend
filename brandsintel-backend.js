@@ -394,6 +394,8 @@ app.post('/api/premium/initiate-payment', async (req, res) => {
     try {
         const { email, subscription_months = 1 } = req.body;
 
+        console.log('💳 Payment initiate request:', { email, subscription_months });
+
         if (!email) {
             return res.status(400).json({ 
                 success: false,
@@ -402,6 +404,7 @@ app.post('/api/premium/initiate-payment', async (req, res) => {
         }
 
         if (!PAYSTACK_SECRET) {
+            console.error('❌ PAYSTACK_SECRET not configured');
             return res.status(500).json({
                 success: false,
                 error: 'Paystack not configured'
@@ -409,9 +412,19 @@ app.post('/api/premium/initiate-payment', async (req, res) => {
         }
 
         const amount = appData.premium_monthly_price * subscription_months * 100;
+        console.log('💰 Amount calculated:', amount, 'kobo (', appData.premium_monthly_price, '×', subscription_months, '×100)');
+
+        if (!amount || amount <= 0) {
+            console.error('❌ Invalid amount:', amount);
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid amount: ' + amount
+            });
+        }
 
         // Generate unique reference first
         const uniqueReference = 'brandstrack_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        console.log('🎟️  Reference:', uniqueReference);
 
         const paystackResponse = await axios.post(
             `${PAYSTACK_API}/transaction/initialize`,
@@ -433,6 +446,8 @@ app.post('/api/premium/initiate-payment', async (req, res) => {
                 }
             }
         );
+
+        console.log('✅ Paystack response:', paystackResponse.status);
 
         if (paystackResponse.data.status) {
             const reference = paystackResponse.data.data.reference;
