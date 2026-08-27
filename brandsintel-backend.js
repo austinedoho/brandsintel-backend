@@ -1,9 +1,9 @@
 /**
- * brandstrack Backend API - WITH PREMIUM SYSTEM + NEWS FETCHING
- * Complete verification engine with Claude AI integration
- * Deploy to: Render, Railway, or Vercel
- * FIXED: NEWS_API_KEY hardcoded as fallback
- */
+* brandstrack Backend API - WITH PREMIUM SYSTEM + NEWS FETCHING
+* Complete verification engine with Claude AI integration
+* Deploy to: Render, Railway, or Vercel
+* FIXED: NEWS_API_KEY hardcoded as fallback + is_premium in search results
+*/
 
 const express = require('express');
 const axios = require('axios');
@@ -70,7 +70,7 @@ const TRUSTED_NEWS_SOURCES = [
   'cnn', 'cnn.com',
   'the economist',
   'fortune', 'fortune.com',
-  
+
   // Nigerian Tier-1 (High Credibility)
   'pulse nigeria', 'pulse.ng',
   'vanguard', 'vanguardngr.com',
@@ -82,7 +82,7 @@ const TRUSTED_NEWS_SOURCES = [
   'leadership', 'leadership.ng',
   'guardian ng', 'guardiannewsngr.com',
   'brands.ng', 'brands', 'brands ng',
-  
+
   // African Media
   'the africa report',
   'african business',
@@ -91,14 +91,14 @@ const TRUSTED_NEWS_SOURCES = [
 ];
 
 /**
- * Check if a news source is trusted
- */
+* Check if a news source is trusted
+*/
 function isTrustedSource(sourceName) {
   if (!sourceName) return false;
-  
+
   const normalizedSource = sourceName.toLowerCase().trim();
-  
-  return TRUSTED_NEWS_SOURCES.some(trusted => 
+
+  return TRUSTED_NEWS_SOURCES.some(trusted =>
     normalizedSource.includes(trusted) || trusted.includes(normalizedSource)
   );
 }
@@ -108,18 +108,18 @@ function isTrustedSource(sourceName) {
 // ============================================================
 
 /**
- * Fetch news from News API for a company - WITH TRUSTED SOURCE FILTERING
- */
+* Fetch news from News API for a company - WITH TRUSTED SOURCE FILTERING
+*/
 async function fetchCompanyNews(companyName) {
   try {
     console.log(`🔍 Fetching news for: ${companyName}`);
-    
+
     const response = await axios.get(NEWS_API_BASE, {
       params: {
         q: companyName,
         language: 'en',
         sortBy: 'publishedAt',
-        pageSize: 100,  // Fetch more to have enough after filtering
+        pageSize: 100, // Fetch more to have enough after filtering
         apiKey: NEWS_API_KEY
       },
       timeout: 5000
@@ -142,9 +142,9 @@ async function fetchCompanyNews(companyName) {
 
       // FILTER: Only keep articles from trusted sources
       const trustedArticles = allArticles.filter(article => isTrustedSource(article.source));
-      
+
       console.log(`✅ Trusted sources found: ${trustedArticles.length}/${allArticles.length} articles`);
-      
+
       if (trustedArticles.length > 0) {
         console.log(`📰 Trusted sources: ${[...new Set(trustedArticles.map(a => a.source))].join(', ')}`);
         return trustedArticles;
@@ -154,7 +154,7 @@ async function fetchCompanyNews(companyName) {
         return allArticles.slice(0, 3);
       }
     }
-    
+
     console.log(`⚠️ No articles found for: ${companyName}`);
     return [];
   } catch (error) {
@@ -164,8 +164,8 @@ async function fetchCompanyNews(companyName) {
 }
 
 /**
- * Simple sentiment analysis based on keywords
- */
+* Simple sentiment analysis based on keywords
+*/
 function analyzeSentiment(text) {
   const positiveWords = [
     'growth', 'raised', 'expanded', 'success', 'partnership', 'innovation',
@@ -196,8 +196,8 @@ function analyzeSentiment(text) {
 }
 
 /**
- * Analyze news sentiment and create summary
- */
+* Analyze news sentiment and create summary
+*/
 function analyzeNewsSentiment(articles) {
   if (!articles || articles.length === 0) {
     return {
@@ -238,8 +238,8 @@ function analyzeNewsSentiment(articles) {
 }
 
 /**
- * Generate readable news summary
- */
+* Generate readable news summary
+*/
 function generateNewsSummary(posPercent, negPercent, trend, total) {
   if (total === 0) return 'No news data available';
 
@@ -257,8 +257,8 @@ function generateNewsSummary(posPercent, negPercent, trend, total) {
 }
 
 /**
- * Calculate trust boost based on news sentiment
- */
+* Calculate trust boost based on news sentiment
+*/
 function calculateNewsTrustBoost(articles, summary) {
   if (!articles || articles.length === 0) return 0;
 
@@ -299,13 +299,13 @@ ${JSON.stringify(evidence, null, 2)}
 
 Respond with ONLY valid JSON (no markdown, no backticks):
 {
-  "riskLevel": "established" | "caution" | "elevated_risk" | "high_risk" | "insufficient_data",
-  "trustScore": 0-100,
-  "confidenceScore": 0-100,
-  "keyIndicators": ["indicator1", "indicator2", "indicator3"],
-  "explanation": "Clear, 1-2 sentence explanation of the risk",
-  "whyThisMatters": "Why this matters to the user in 1 sentence",
-  "nextSteps": "What the user should do next"
+"riskLevel": "established" | "caution" | "elevated_risk" | "high_risk" | "insufficient_data",
+"trustScore": 0-100,
+"confidenceScore": 0-100,
+"keyIndicators": ["indicator1", "indicator2", "indicator3"],
+"explanation": "Clear, 1-2 sentence explanation of the risk",
+"whyThisMatters": "Why this matters to the user in 1 sentence",
+"nextSteps": "What the user should do next"
 }`,
         },
       ],
@@ -450,7 +450,8 @@ async function collectAllEvidence(businessName, website, socialHandle, paymentAc
   if (paymentAccount) {
     evidence.payment_account = {
       recently_created: true,
-      account_name_matches_business: paymentAccount.accountName?.toLowerCase().includes(businessName.toLowerCase()),
+      account_name_matches_business:
+        paymentAccount.accountName?.toLowerCase().includes(businessName.toLowerCase()),
       account_age_estimate: 'unknown',
     };
   }
@@ -465,21 +466,21 @@ async function collectAllEvidence(businessName, website, socialHandle, paymentAc
 const checkRateLimit = async (phoneNumber) => {
   try {
     const today = new Date().toISOString().split('T')[0];
-    
+
     const { data: checks, error } = await supabase
       .from('verification_activity')
       .select('id')
       .eq('phone_number', phoneNumber)
       .gte('created_at', `${today}T00:00:00`)
       .lte('created_at', `${today}T23:59:59`);
-    
+
     if (error) {
       console.error('Rate limit check error:', error);
       return { allowed: true };
     }
-    
+
     const count = checks?.length || 0;
-    
+
     if (count >= 3) {
       return {
         allowed: false,
@@ -490,7 +491,7 @@ const checkRateLimit = async (phoneNumber) => {
         upgradeMessage: 'Get Premium for ₦30,000/month and unlock unlimited checks!'
       };
     }
-    
+
     return {
       allowed: true,
       checksUsedToday: count,
@@ -507,20 +508,20 @@ const checkRateLimit = async (phoneNumber) => {
 // ============================================================
 
 /**
- * POST /api/verify
- * Main verification endpoint - business trust check with rate limiting
- */
+* POST /api/verify
+* Main verification endpoint - business trust check with rate limiting
+*/
 app.post('/api/verify', async (req, res) => {
   try {
     const { businessName, website, socialHandle, phoneNumber } = req.body;
-    
+
     if (!businessName) {
       return res.status(400).json({ error: 'Business name is required' });
     }
-    
+
     if (phoneNumber) {
       const rateLimit = await checkRateLimit(phoneNumber);
-      
+
       if (!rateLimit.allowed) {
         return res.status(429).json({
           error: 'Rate limit exceeded',
@@ -532,10 +533,10 @@ app.post('/api/verify', async (req, res) => {
         });
       }
     }
-    
+
     const evidence = await collectAllEvidence(businessName, website, socialHandle, null);
     const assessment = await generateRiskAssessment(evidence);
-    
+
     const { data: business, error: businessError } = await supabase
       .from('businesses')
       .upsert(
@@ -549,7 +550,7 @@ app.post('/api/verify', async (req, res) => {
       )
       .select()
       .single();
-    
+
     if (!businessError && business) {
       await supabase.from('risk_profiles').insert([
         {
@@ -562,7 +563,7 @@ app.post('/api/verify', async (req, res) => {
           generated_at: new Date(),
         },
       ]);
-      
+
       if (phoneNumber) {
         await supabase.from('verification_activity').insert([
           {
@@ -575,7 +576,7 @@ app.post('/api/verify', async (req, res) => {
         ]);
       }
     }
-    
+
     res.json({
       businessName,
       trustScore: assessment.trustScore,
@@ -598,9 +599,9 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /**
- * POST /api/email-signup
- * Store email signups from landing page
- */
+* POST /api/email-signup
+* Store email signups from landing page
+*/
 app.post('/api/email-signup', async (req, res) => {
   try {
     const { name, email, userType, signupDate } = req.body;
@@ -633,17 +634,17 @@ app.post('/api/email-signup', async (req, res) => {
 });
 
 /**
- * POST /api/verify-payment
- * Verify payment account for fraud
- */
+* POST /api/verify-payment
+* Verify payment account for fraud
+*/
 app.post('/api/verify-payment', async (req, res) => {
   try {
     const { accountNumber, bankCode, phoneNumber } = req.body;
-    
+
     if (!accountNumber || !bankCode) {
       return res.status(400).json({ error: 'Account number and bank code required' });
     }
-    
+
     if (phoneNumber) {
       const rateLimit = await checkRateLimit(phoneNumber);
       if (!rateLimit.allowed) {
@@ -653,14 +654,14 @@ app.post('/api/verify-payment', async (req, res) => {
         });
       }
     }
-    
+
     const assessment = {
       accountStatus: 'verified',
       riskLevel: 'low',
       trustScore: 85,
       explanation: 'Account appears legitimate',
     };
-    
+
     res.json(assessment);
   } catch (error) {
     console.error('Payment verification error:', error);
@@ -669,26 +670,26 @@ app.post('/api/verify-payment', async (req, res) => {
 });
 
 /**
- * GET /api/check-rate-limit/:phoneNumber
- * Check remaining checks for a phone number
- */
+* GET /api/check-rate-limit/:phoneNumber
+* Check remaining checks for a phone number
+*/
 app.get('/api/check-rate-limit/:phoneNumber', async (req, res) => {
   try {
     const { phoneNumber } = req.params;
-    
+
     if (!phoneNumber) {
       return res.status(400).json({ error: 'Phone number required' });
     }
-    
+
     const rateLimit = await checkRateLimit(phoneNumber);
-    
+
     res.json({
       phoneNumber,
       allowed: rateLimit.allowed,
       checksUsedToday: rateLimit.checksUsedToday,
       checksRemaining: rateLimit.checksRemaining || 0,
       maxChecksPerDay: 3,
-      message: rateLimit.allowed 
+      message: rateLimit.allowed
         ? `You have ${rateLimit.checksRemaining} checks remaining today`
         : rateLimit.message
     });
@@ -699,9 +700,9 @@ app.get('/api/check-rate-limit/:phoneNumber', async (req, res) => {
 });
 
 /**
- * POST /api/reports
- * User reports a suspicious business
- */
+* POST /api/reports
+* User reports a suspicious business
+*/
 app.post('/api/reports', async (req, res) => {
   try {
     const { businessName, reportType, description } = req.body;
@@ -746,9 +747,9 @@ app.post('/api/reports', async (req, res) => {
 });
 
 /**
- * GET /api/business/:businessName
- * Get business profile
- */
+* GET /api/business/:businessName
+* Get business profile
+*/
 app.get('/api/business/:businessName', async (req, res) => {
   try {
     const { businessName } = req.params;
@@ -771,9 +772,9 @@ app.get('/api/business/:businessName', async (req, res) => {
 });
 
 /**
- * GET /api/business/:businessId/reports
- * Get reports for a business
- */
+* GET /api/business/:businessId/reports
+* Get reports for a business
+*/
 app.get('/api/business/:businessId/reports', async (req, res) => {
   try {
     const { businessId } = req.params;
@@ -795,9 +796,9 @@ app.get('/api/business/:businessId/reports', async (req, res) => {
 });
 
 /**
- * POST /api/business/verify
- * Business claims their profile
- */
+* POST /api/business/verify
+* Business claims their profile
+*/
 app.post('/api/business/verify', async (req, res) => {
   try {
     const { businessName, website, email, verificationCode } = req.body;
@@ -831,9 +832,9 @@ app.post('/api/business/verify', async (req, res) => {
 });
 
 /**
- * GET /api/health
- * Health check
- */
+* GET /api/health
+* Health check
+*/
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date() });
 });
@@ -847,9 +848,9 @@ app.get('/api/stats', async (req, res) => {
     const businesses = await supabase.from('businesses').select('id').eq('verified', true);
     const users = await supabase.from('verification_activity').select('id');
     const payments = await supabase.from('payments').select('amount').eq('status', 'completed');
-    
+
     const monthlyRevenue = (payments.data || []).reduce((sum, p) => sum + (p.amount || 0), 0);
-    
+
     res.json({
       totalUsers: users.data?.length || 0,
       totalBusinesses: businesses.data?.length || 0,
@@ -873,7 +874,7 @@ app.get('/api/businesses', async (req, res) => {
       .from('businesses')
       .select('*')
       .order('created_at', { ascending: false });
-    
+
     if (error) throw error;
     res.json(data || []);
   } catch (error) {
@@ -889,8 +890,9 @@ app.get('/api/users', async (req, res) => {
       .select('*')
       .order('created_at', { ascending: false })
       .limit(100);
-    
+
     if (error) throw error;
+
     res.json(data || []);
   } catch (error) {
     console.error('Error fetching users:', error);
@@ -904,7 +906,7 @@ app.get('/api/payments', async (req, res) => {
       .from('payments')
       .select('*')
       .order('created_at', { ascending: false });
-    
+
     if (error) throw error;
     res.json(data || []);
   } catch (error) {
@@ -918,9 +920,9 @@ app.get('/api/payments', async (req, res) => {
 // ============================================================
 
 /**
- * GET /api/companies/search
- * Search companies by name - SORTS PREMIUM FIRST
- */
+* GET /api/companies/search
+* Search companies by name - FIXED: NOW RETURNS is_premium FLAG
+*/
 app.get('/api/companies/search', async (req, res) => {
   try {
     const { q, limit = 10, offset = 0 } = req.query;
@@ -947,25 +949,32 @@ app.get('/api/companies/search', async (req, res) => {
       return (b.trust_score || 0) - (a.trust_score || 0);
     });
 
+    // ADD: is_premium flag to each result - THIS IS THE FIX!
+    const withPremiumFlag = sorted.map(company => ({
+      ...company,
+      is_premium: company.is_premium || false,
+      premium_status: company.is_premium ? 'PREMIUM' : 'FREE'
+    }));
+
     res.json({
       success: true,
-      results: sorted,
-      total: sorted.length,
+      results: withPremiumFlag,
+      total: withPremiumFlag.length,
       query: q
     });
   } catch (error) {
     console.error('Search error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
 
 /**
- * GET /api/companies/trending/top
- * Get top verified companies by trust score
- */
+* GET /api/companies/trending/top
+* Get top verified companies by trust score
+*/
 app.get('/api/companies/trending/top', async (req, res) => {
   try {
     const { limit = 20 } = req.query;
@@ -986,17 +995,17 @@ app.get('/api/companies/trending/top', async (req, res) => {
     });
   } catch (error) {
     console.error('Trending error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
 
 /**
- * GET /api/companies/cac/:cacNumber
- * Search company by CAC number
- */
+* GET /api/companies/cac/:cacNumber
+* Search company by CAC number
+*/
 app.get('/api/companies/cac/:cacNumber', async (req, res) => {
   try {
     const { cacNumber } = req.params;
@@ -1008,9 +1017,9 @@ app.get('/api/companies/cac/:cacNumber', async (req, res) => {
       .single();
 
     if (error || !company) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Company not found' 
+      return res.status(404).json({
+        success: false,
+        error: 'Company not found'
       });
     }
 
@@ -1020,17 +1029,17 @@ app.get('/api/companies/cac/:cacNumber', async (req, res) => {
     });
   } catch (error) {
     console.error('CAC search error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
 
 /**
- * GET /api/companies/:companyId
- * Get complete company profile WITH NEWS - FIXED VERSION
- */
+* GET /api/companies/:companyId
+* Get complete company profile WITH NEWS
+*/
 app.get('/api/companies/:companyId', async (req, res) => {
   try {
     const { companyId } = req.params;
@@ -1046,9 +1055,9 @@ app.get('/api/companies/:companyId', async (req, res) => {
 
     if (companyError || !company) {
       console.log(`❌ Company not found: ${companyId}`);
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Company not found' 
+      return res.status(404).json({
+        success: false,
+        error: 'Company not found'
       });
     }
 
@@ -1112,25 +1121,25 @@ app.get('/api/companies/:companyId', async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Profile error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
 
 /**
- * POST /api/companies/verify-request
- * Handle verification requests from WhatsApp/web
- */
+* POST /api/companies/verify-request
+* Handle verification requests from WhatsApp/web
+*/
 app.post('/api/companies/verify-request', async (req, res) => {
   try {
     const { company_name, phone_number } = req.body;
 
     if (!company_name || !phone_number) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Company name and phone required' 
+      return res.status(400).json({
+        success: false,
+        error: 'Company name and phone required'
       });
     }
 
@@ -1184,17 +1193,17 @@ app.post('/api/companies/verify-request', async (req, res) => {
     });
   } catch (error) {
     console.error('Verify request error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
 
 /**
- * GET /api/companies/:companyId/stats
- * Get statistics for a company
- */
+* GET /api/companies/:companyId/stats
+* Get statistics for a company
+*/
 app.get('/api/companies/:companyId/stats', async (req, res) => {
   try {
     const { companyId } = req.params;
@@ -1206,9 +1215,9 @@ app.get('/api/companies/:companyId/stats', async (req, res) => {
       .single();
 
     if (!company) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Company not found' 
+      return res.status(404).json({
+        success: false,
+        error: 'Company not found'
       });
     }
 
@@ -1230,33 +1239,33 @@ app.get('/api/companies/:companyId/stats', async (req, res) => {
     });
   } catch (error) {
     console.error('Stats error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
 
 /**
- * POST /api/companies/:companyId/reviews
- * Add a review for a company
- */
+* POST /api/companies/:companyId/reviews
+* Add a review for a company
+*/
 app.post('/api/companies/:companyId/reviews', async (req, res) => {
   try {
     const { companyId } = req.params;
     const { rating, comment, reviewer_phone } = req.body;
 
     if (!rating || !reviewer_phone) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Rating and phone number required' 
+      return res.status(400).json({
+        success: false,
+        error: 'Rating and phone number required'
       });
     }
 
     if (rating < 1 || rating > 5) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Rating must be between 1 and 5' 
+      return res.status(400).json({
+        success: false,
+        error: 'Rating must be between 1 and 5'
       });
     }
 
@@ -1281,7 +1290,7 @@ app.post('/api/companies/:companyId/reviews', async (req, res) => {
 
     if (allReviews && allReviews.length > 0) {
       const avgRating = (allReviews.reduce((sum, r) => sum + r.rating, 0) / allReviews.length).toFixed(2);
-      
+
       await supabase
         .from('companies')
         .update({
@@ -1298,29 +1307,29 @@ app.post('/api/companies/:companyId/reviews', async (req, res) => {
     });
   } catch (error) {
     console.error('Review error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
 
 // ============================================================
-// PREMIUM SYSTEM ROUTES - NEW
+// PREMIUM SYSTEM ROUTES
 // ============================================================
 
 /**
- * POST /api/premium/initiate-payment
- * Initialize Paystack payment for premium
- */
+* POST /api/premium/initiate-payment
+* Initialize Paystack payment for premium
+*/
 app.post('/api/premium/initiate-payment', async (req, res) => {
   try {
     const { company_id, company_name, email, phone } = req.body;
 
     if (!company_id || !email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Company ID and email required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Company ID and email required'
       });
     }
 
@@ -1378,9 +1387,9 @@ app.post('/api/premium/initiate-payment', async (req, res) => {
 });
 
 /**
- * POST /api/premium/paystack-webhook
- * Verify payment and activate premium
- */
+* POST /api/premium/paystack-webhook
+* Verify payment and activate premium
+*/
 app.post('/api/premium/paystack-webhook', async (req, res) => {
   try {
     const { reference } = req.body;
@@ -1431,8 +1440,8 @@ app.post('/api/premium/paystack-webhook', async (req, res) => {
         })
         .eq('paystack_reference', reference);
 
-      res.json({ 
-        success: true, 
+      res.json({
+        success: true,
         message: 'Payment verified. Company now premium!',
         company_id: company_id,
         subscription_end_date: endDate
@@ -1452,9 +1461,9 @@ app.post('/api/premium/paystack-webhook', async (req, res) => {
 });
 
 /**
- * GET /api/premium/status/:company_id
- * Check if company is premium and subscription status
- */
+* GET /api/premium/status/:company_id
+* Check if company is premium and subscription status
+*/
 app.get('/api/premium/status/:company_id', async (req, res) => {
   try {
     const { company_id } = req.params;
@@ -1479,16 +1488,16 @@ app.get('/api/premium/status/:company_id', async (req, res) => {
           .update({ is_premium: false })
           .eq('id', company_id);
 
-        return res.json({ 
-          success: true, 
-          is_premium: false, 
-          message: 'Subscription expired' 
+        return res.json({
+          success: true,
+          is_premium: false,
+          message: 'Subscription expired'
         });
       }
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       is_premium: company.is_premium || false,
       subscription_end_date: company.subscription_end_date
     });
@@ -1499,9 +1508,9 @@ app.get('/api/premium/status/:company_id', async (req, res) => {
 });
 
 /**
- * GET /api/companies/trending/premium
- * Get trending premium companies
- */
+* GET /api/companies/trending/premium
+* Get trending premium companies
+*/
 app.get('/api/companies/trending/premium', async (req, res) => {
   try {
     const { data: companies, error } = await supabase
@@ -1539,13 +1548,13 @@ app.use((err, req, res, next) => {
 // ==================== WHATSAPP BOT ENDPOINTS ====================
 
 /**
- * POST /whatsapp/webhook
- * Receive incoming WhatsApp messages
- */
+* POST /whatsapp/webhook
+* Receive incoming WhatsApp messages
+*/
 app.post('/whatsapp/webhook', async (req, res) => {
   try {
     const { Body, From, To } = req.body;
-    
+
     if (!Body || !From) {
       return res.status(400).json({ error: 'Invalid request' });
     }
@@ -1560,7 +1569,7 @@ app.post('/whatsapp/webhook', async (req, res) => {
     if (message.toLowerCase().startsWith('check ')) {
       const companyName = message.substring(6).trim();
       response = await handleCheckBusiness(companyName, userPhone);
-    } 
+    }
     else if (message.toLowerCase().startsWith('verify ')) {
       const businessName = message.substring(7).trim();
       response = await handleVerifySeller(businessName, userPhone);
@@ -1612,7 +1621,7 @@ async function handleCheckBusiness(companyName, userPhone) {
 
     let trustEmoji = '';
     let trustText = '';
-    
+
     if (company.trust_score >= 90) {
       trustEmoji = '✅';
       trustText = 'VERIFIED - High Trust';
@@ -1633,7 +1642,7 @@ async function handleCheckBusiness(companyName, userPhone) {
 
 async function handleVerifySeller(businessName, userPhone) {
   try {
-    return `🔐 *Seller Verification*\n\nTo get verified badge:\n\n1️⃣ Business name: ${businessName}\n2️⃣ Reply with your:\n   • Website\n   • WhatsApp number\n   • Email\n\nCost: ₦30,000/month\n\nReply YES to continue.`;
+    return `🔐 *Seller Verification*\n\nTo get verified badge:\n\n1️⃣ Business name: ${businessName}\n2️⃣ Reply with your:\n • Website\n • WhatsApp number\n • Email\n\nCost: ₦30,000/month\n\nReply YES to continue.`;
   } catch (error) {
     console.error('Verify seller error:', error);
     return '⚠️ Error processing verification.';
@@ -1666,7 +1675,7 @@ async function handleJobCheck(companyName, userPhone) {
 }
 
 function handleHelpCommand() {
-  return `*brandstrack Bot Help* 🤖\n\n📍 *CHECK* - Verify any company\nUsage: Check Jumia\nGets: Trust score, address, CAC\n\n🏢 *VERIFY* - Get verified seller badge\nUsage: Verify My Business\nCost: ₦30,000/month\n\n💼 *JOB* - Check if job is real\nUsage: Job Google\nGets: Company info, safety tips\n\n*Questions?* Reply MENU for more.`;
+  return `*brandstrack Bot Help* 🟡\n\n📍 *CHECK* - Verify any company\nUsage: Check Jumia\nGets: Trust score, address, CAC\n\n🏢 *VERIFY* - Get verified seller badge\nUsage: Verify My Business\nCost: ₦30,000/month\n\n💼 *JOB* - Check if job is real\nUsage: Job Google\nGets: Company info, safety tips\n\n*Questions?* Reply MENU for more.`;
 }
 
 function handleMenuCommand() {
@@ -1682,8 +1691,8 @@ async function sendWhatsAppMessage(toPhone, message) {
 }
 
 app.get('/whatsapp/webhook', (req, res) => {
-  res.json({ 
-    success: true, 
+  res.json({
+    success: true,
     message: 'WhatsApp webhook is ready',
     endpoint: '/whatsapp/webhook'
   });
@@ -1700,8 +1709,9 @@ app.listen(PORT, () => {
   console.log(`💳 Paystack integration: Ready`);
   console.log(`📰 News API Key: ${NEWS_API_KEY ? 'CONFIGURED ✅' : 'NOT CONFIGURED ❌'}`);
   console.log(`🔑 News API: ${NEWS_API_KEY ? NEWS_API_KEY.substring(0, 10) + '...' : 'NOT SET'}`);
-  console.log(`🛡️  TRUSTED SOURCES FILTERING: ENABLED ✅`);
+  console.log(`🛡️ TRUSTED SOURCES FILTERING: ENABLED ✅`);
   console.log(`✅ Monitoring ${TRUSTED_NEWS_SOURCES.length} trusted news outlets (including brands.ng)`);
+  console.log(`✅ Search results now return is_premium flag for premium news feature`);
 });
 
 module.exports = app;
