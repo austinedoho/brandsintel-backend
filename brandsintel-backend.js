@@ -437,11 +437,16 @@ app.post('/api/premium/initiate-payment', async (req, res) => {
 
         const amount = appData.premium_monthly_price * subscription_months * 100;
 
+        // Generate unique reference first
+        const uniqueReference = 'brandstrack_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+
         const paystackResponse = await axios.post(
             `${PAYSTACK_API}/transaction/initialize`,
             {
                 email: email,
                 amount: amount,
+                reference: uniqueReference,
+                callback_url: 'https://www.brandstrack.com/?payment_reference=' + uniqueReference,
                 metadata: {
                     email: email,
                     subscription_months: subscription_months,
