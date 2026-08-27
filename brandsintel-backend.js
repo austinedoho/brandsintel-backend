@@ -236,7 +236,44 @@ app.get('/api/companies/search', (req, res) => {
             cac_number: 'RC123456',
             industry: 'Telecommunications',
             trust_score: 95,
-            is_premium: false
+            is_premium: false,
+            verification_status: 'verified',
+            risk_level: 'low',
+            description: 'MTN Nigeria Communications Limited is a leading telecommunications company in Nigeria, providing mobile, internet and financial services.',
+            address: 'Plot 1687, Lekki-Epe Expressway, Lekki, Lagos',
+            employees: 8500,
+            founded: '1997',
+            email: 'contact@mtn.com.ng',
+            phone: '+234 (0) 803 000 0001',
+            website: 'https://www.mtn.com.ng',
+            trend: 'STABLE',
+            news: [
+                {
+                    title: 'MTN Nigeria Reports Record Revenue Growth',
+                    source: 'Bloomberg',
+                    published_date: '2026-08-25',
+                    url: 'https://news.google.com',
+                    sentiment: 'positive'
+                },
+                {
+                    title: 'MTN Expands 4G Coverage Across Nigeria',
+                    source: 'TechCrunch',
+                    published_date: '2026-08-20',
+                    url: 'https://news.google.com',
+                    sentiment: 'positive'
+                },
+                {
+                    title: 'MTN Nigeria Customer Service Improvements',
+                    source: 'Business Today',
+                    published_date: '2026-08-15',
+                    url: 'https://news.google.com',
+                    sentiment: 'neutral'
+                }
+            ],
+            news_summary: {
+                total_articles: 3,
+                positive_percentage: 67
+            }
         },
         'paystack': {
             id: 'paystack-001',
@@ -244,7 +281,120 @@ app.get('/api/companies/search', (req, res) => {
             cac_number: 'RC987654',
             industry: 'FinTech',
             trust_score: 98,
-            is_premium: true
+            is_premium: true,
+            verification_status: 'verified',
+            risk_level: 'low',
+            description: 'Paystack is a leading African fintech company providing payment processing solutions for businesses across Africa. Trusted by over 500,000 businesses.',
+            address: '15A Idowu Taylor Street, Victoria Island, Lagos',
+            employees: 450,
+            founded: '2015',
+            email: 'support@paystack.com',
+            phone: '+234 (0) 700 933 933',
+            website: 'https://paystack.com',
+            trend: 'GROWING',
+            news: [
+                {
+                    title: 'Paystack Raises $100M Series C Funding at $2B Valuation',
+                    source: 'TechCrunch',
+                    published_date: '2026-08-24',
+                    url: 'https://news.google.com',
+                    sentiment: 'positive'
+                },
+                {
+                    title: 'Paystack Expands to New African Markets',
+                    source: 'Reuters',
+                    published_date: '2026-08-22',
+                    url: 'https://news.google.com',
+                    sentiment: 'positive'
+                },
+                {
+                    title: 'Paystack Partners with Global Payment Networks',
+                    source: 'Bloomberg',
+                    published_date: '2026-08-18',
+                    url: 'https://news.google.com',
+                    sentiment: 'positive'
+                },
+                {
+                    title: 'How Paystack is Transforming African Commerce',
+                    source: 'Forbes Africa',
+                    published_date: '2026-08-10',
+                    url: 'https://news.google.com',
+                    sentiment: 'positive'
+                }
+            ],
+            news_summary: {
+                total_articles: 4,
+                positive_percentage: 100
+            }
+        },
+        'jumia': {
+            id: 'jumia-001',
+            name: 'Jumia Technologies',
+            cac_number: 'RC654321',
+            industry: 'E-Commerce',
+            trust_score: 92,
+            is_premium: false,
+            verification_status: 'verified',
+            risk_level: 'medium',
+            description: 'Jumia is the leading e-commerce platform in Africa, offering a wide range of products and services to millions of customers.',
+            address: '15 Macarthy Street, Saint Thomas, Lagos',
+            employees: 3200,
+            founded: '2012',
+            email: 'help@jumia.com.ng',
+            phone: '+234 (0) 700 100 100',
+            website: 'https://www.jumia.com.ng',
+            trend: 'STABLE',
+            news: [
+                {
+                    title: 'Jumia Reports Strong Q2 2026 Performance',
+                    source: 'Reuters',
+                    published_date: '2026-08-23',
+                    url: 'https://news.google.com',
+                    sentiment: 'positive'
+                },
+                {
+                    title: 'Jumia Launches New Logistics Initiative',
+                    source: 'Business Today',
+                    published_date: '2026-08-19',
+                    url: 'https://news.google.com',
+                    sentiment: 'neutral'
+                }
+            ],
+            news_summary: {
+                total_articles: 2,
+                positive_percentage: 50
+            }
+        },
+        'google': {
+            id: 'google-001',
+            name: 'Google Nigeria',
+            cac_number: 'RC456789',
+            industry: 'Technology',
+            trust_score: 99,
+            is_premium: true,
+            verification_status: 'verified',
+            risk_level: 'low',
+            description: 'Google Nigeria brings the best of Google search, products and services to Nigerian users and businesses.',
+            address: '35 Computer Village, Lagos',
+            employees: 800,
+            founded: '2010',
+            email: 'contact@google.com.ng',
+            phone: '+234 (0) 1 262 3100',
+            website: 'https://www.google.com.ng',
+            trend: 'GROWING',
+            news: [
+                {
+                    title: 'Google Invests in African Tech Innovation',
+                    source: 'TechCrunch',
+                    published_date: '2026-08-26',
+                    url: 'https://news.google.com',
+                    sentiment: 'positive'
+                }
+            ],
+            news_summary: {
+                total_articles: 1,
+                positive_percentage: 100
+            }
         }
     };
 
