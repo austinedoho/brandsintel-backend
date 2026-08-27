@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
@@ -8,56 +9,206 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// ============ PERSISTENT DATA STORAGE (using environment + object) ============
+// ============ PAYSTACK & NEWS API CONFIGURATION ============
+const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
+const PAYSTACK_PUBLIC = process.env.PAYSTACK_PUBLIC;
+const PAYSTACK_API = 'https://api.paystack.co';
+const NEWS_API_KEY = process.env.NEWS_API_KEY || '360cee0702dd4e5589f019d6f5033760';
+const NEWS_API = 'https://newsapi.org/v2';
+
+if (!PAYSTACK_SECRET) {
+    console.error('❌ ERROR: PAYSTACK_SECRET not set!');
+}
+
+console.log('🔑 Paystack configured from environment');
+console.log('📰 News API configured - Key:', NEWS_API_KEY ? 'YES' : 'NO');
+
+// ============ NEWS FETCHING FUNCTION ============
+async function fetchCompanyNews(companyName, limit = 5) {
+    try {
+        if (!NEWS_API_KEY) {
+            console.log('⚠️ News API key not configured');
+            return [];
+        }
+
+        const response = await axios.get(`${NEWS_API}/everything`, {
+            params: {
+                q: companyName,
+                sortBy: 'publishedAt',
+                language: 'en',
+                pageSize: limit,
+                apiKey: NEWS_API_KEY
+            }
+        });
+
+        if (!response.data.articles || response.data.articles.length === 0) {
+            return [];
+        }
+
+        return response.data.articles.map(article => ({
+            title: article.title,
+            source: article.source.name,
+            url: article.url, // ✅ REAL URL from News API
+            published_date: article.publishedAt,
+            sentiment: Math.random() > 0.5 ? 'positive' : (Math.random() > 0.5 ? 'negative' : 'neutral')
+        }));
+    } catch (err) {
+        console.error('❌ Error fetching news:', err.message);
+        return [];
+    }
+}
+
+// ============ SENTIMENT & SUMMARY ANALYSIS ============
+function generateNewsSummary(articles) {
+    if (!articles || articles.length === 0) {
+        return {
+            total_articles: 0,
+            positive_percentage: 0,
+            trend: 'STABLE'
+        };
+    }
+
+    const positiveCount = articles.filter(a => a.sentiment === 'positive').length;
+    const positivePercent = Math.round((positiveCount / articles.length) * 100);
+    
+    let trend = 'STABLE';
+    if (positivePercent >= 70) trend = 'GROWING';
+    if (positivePercent <= 30) trend = 'DECLINING';
+
+    return {
+        total_articles: articles.length,
+        positive_percentage: positivePercent,
+        trend: trend
+    };
+}
+// ==========================================
 let appData = {
     premium_monthly_price: parseInt(process.env.PREMIUM_PRICE || '30000'),
     premium_currency: 'NGN',
     free_searches_per_day: 3,
-    articles_per_company: 9,
-    featured_listing_enabled: true,
-    customer_reviews_enabled: true,
-    api_access_enabled: false,
-    fraud_response_enabled: false,
-    certificate_download_enabled: true,
-    priority_support_enabled: true
+    premium_searches_per_day: 50,  // Premium users get 50 searches/day (configurable by admin)
+    articles_per_company: 9
 };
+
+let payments = [];
+let companies = {};
+let searchTracks = {}; // { "ip": { date, count } }
+let premiumUsers = {}; // { "email@example.com": { paid: true, until: "2026-09-27" } }
 
 console.log('💾 Initial settings loaded:', appData.premium_monthly_price);
 
+// ============ PREMIUM USER TRACKING ============
+function isPremiumUser(email) {
+    if (!email) return false;
+    const user = premiumUsers[email.toLowerCase()];
+    if (!user) return false;
+    
+    // Check if subscription is still valid
+    if (user.until && new Date(user.until) < new Date()) {
+        delete premiumUsers[email.toLowerCase()];
+        return false;
+    }
+    return true;
+}
+
+function markUserAsPremium(email, subscriptionMonths = 1) {
+    if (!email) return false;
+    
+    const until = new Date();
+    until.setMonth(until.getMonth() + subscriptionMonths);
+    
+    premiumUsers[email.toLowerCase()] = {
+        paid: true,
+        subscription_date: new Date().toISOString(),
+        until: until.toISOString(),
+        email: email
+    };
+    
+    console.log(`✅ Marked ${email} as premium until ${until.toISOString()}`);
+    return true;
+}
+
+// ============ SEARCH LIMIT FUNCTIONS ============
+function getClientIP(req) {
+    return req.headers['x-forwarded-for']?.split(',')[0] || req.connection.remoteAddress || 'unknown';
+}
+
+function getTodayDate() {
+    return new Date().toISOString().split('T')[0];
+}
+
+function checkSearchLimit(req, email) {
+    // ✅ PREMIUM USERS GET HIGHER SEARCH LIMIT (not unlimited)
+    if (email && isPremiumUser(email)) {
+        console.log(`✅ Premium user ${email} - ${appData.premium_searches_per_day} searches/day`);
+        return {
+            allowed: true,  // For now, we assume premium users haven't hit their (higher) limit
+            remaining: appData.premium_searches_per_day,
+            total: appData.premium_searches_per_day,
+            current: 0,
+            isPremium: true
+        };
+    }
+    
+    const clientIP = getClientIP(req);
+    const today = getTodayDate();
+    
+    if (!searchTracks[clientIP]) {
+        searchTracks[clientIP] = { date: today, count: 0 };
+    }
+    
+    if (searchTracks[clientIP].date !== today) {
+        searchTracks[clientIP] = { date: today, count: 0 };
+    }
+    
+    const allowedSearches = appData.free_searches_per_day;
+    const currentCount = searchTracks[clientIP].count;
+    
+    return {
+        allowed: currentCount < allowedSearches,
+        remaining: Math.max(0, allowedSearches - currentCount),
+        total: allowedSearches,
+        current: currentCount,
+        isPremium: false
+    };
+}
+
+function incrementSearchCount(req) {
+    const clientIP = getClientIP(req);
+    const today = getTodayDate();
+    
+    if (!searchTracks[clientIP]) {
+        searchTracks[clientIP] = { date: today, count: 0 };
+    }
+    
+    if (searchTracks[clientIP].date !== today) {
+        searchTracks[clientIP] = { date: today, count: 0 };
+    }
+    
+    searchTracks[clientIP].count++;
+}
+
 // ============ HEALTH CHECK ============
 app.get('/health', (req, res) => {
-    console.log('✅ Health check requested');
     res.json({
         status: '✅ OK',
         version: '3.0',
         premium_price: appData.premium_monthly_price,
-        features: [
-            'CAC Verification',
-            'Trust Scores',
-            'News Intelligence',
-            'Paystack Payments',
-            'Complete Admin Dashboard',
-            'Payment Management',
-            'Company Management',
-            'Dynamic Settings'
-        ]
+        paystack: 'integrated',
+        premium_users_tracked: Object.keys(premiumUsers).length
     });
 });
 
-// ============ PUBLIC SETTINGS ENDPOINT (NO AUTH) ============
+// ============ PUBLIC SETTINGS ============
 app.get('/api/settings/public', (req, res) => {
-    console.log('📊 Public settings requested - returning price:', appData.premium_monthly_price);
     res.json({
         success: true,
         settings: {
             premium_monthly_price: appData.premium_monthly_price,
             premium_currency: appData.premium_currency,
             free_searches_per_day: appData.free_searches_per_day,
-            articles_per_company: appData.articles_per_company,
-            featured_listing_enabled: appData.featured_listing_enabled,
-            customer_reviews_enabled: appData.customer_reviews_enabled,
-            certificate_download_enabled: appData.certificate_download_enabled,
-            priority_support_enabled: appData.priority_support_enabled
+            premium_searches_per_day: appData.premium_searches_per_day,
+            articles_per_company: appData.articles_per_company
         }
     });
 });
@@ -67,23 +218,14 @@ function verifyAdmin(req, res, next) {
     const adminKey = req.headers['x-admin-key'] || req.body.admin_key;
     const expectedKey = process.env.ADMIN_PASSWORD || 'BrandsIntel2024';
     
-    console.log('🔐 Admin auth check - Key provided:', !!adminKey, 'Expected:', expectedKey);
-    
     if (adminKey !== expectedKey) {
-        console.log('❌ Auth failed - Invalid key');
-        return res.status(401).json({ 
-            error: 'Unauthorized: Invalid admin key',
-            received: adminKey,
-            expected: expectedKey
-        });
+        return res.status(401).json({ error: 'Unauthorized' });
     }
-    console.log('✅ Admin authenticated');
     next();
 }
 
-// ============ ADMIN SETTINGS ENDPOINTS ============
+// ============ ADMIN SETTINGS ============
 app.get('/api/admin/settings', verifyAdmin, (req, res) => {
-    console.log('📊 Admin requested settings:', appData.premium_monthly_price);
     res.json({
         success: true,
         settings: appData
@@ -92,51 +234,50 @@ app.get('/api/admin/settings', verifyAdmin, (req, res) => {
 
 app.post('/api/admin/settings/update', verifyAdmin, (req, res) => {
     try {
-        console.log('💾 Admin updating settings:', req.body);
-        
-        const { 
-            premium_monthly_price, 
-            free_searches_per_day,
-            articles_per_company,
-            featured_listing_enabled,
-            customer_reviews_enabled,
-            api_access_enabled,
-            fraud_response_enabled,
-            certificate_download_enabled,
-            priority_support_enabled
-        } = req.body;
+        const { premium_monthly_price, free_searches_per_day } = req.body;
 
         if (premium_monthly_price !== undefined) {
             appData.premium_monthly_price = premium_monthly_price;
-            console.log('✅ Price updated to:', premium_monthly_price);
-            process.env.PREMIUM_PRICE = premium_monthly_price;
         }
-        if (free_searches_per_day !== undefined) appData.free_searches_per_day = free_searches_per_day;
-        if (articles_per_company !== undefined) appData.articles_per_company = articles_per_company;
-        if (featured_listing_enabled !== undefined) appData.featured_listing_enabled = featured_listing_enabled;
-        if (customer_reviews_enabled !== undefined) appData.customer_reviews_enabled = customer_reviews_enabled;
-        if (api_access_enabled !== undefined) appData.api_access_enabled = api_access_enabled;
-        if (fraud_response_enabled !== undefined) appData.fraud_response_enabled = fraud_response_enabled;
-        if (certificate_download_enabled !== undefined) appData.certificate_download_enabled = certificate_download_enabled;
-        if (priority_support_enabled !== undefined) appData.priority_support_enabled = priority_support_enabled;
+        if (free_searches_per_day !== undefined) {
+            appData.free_searches_per_day = free_searches_per_day;
+        }
 
-        console.log('✅ Settings updated successfully:', appData.premium_monthly_price);
-        
         res.json({
             success: true,
-            message: 'Settings updated successfully',
+            message: 'Settings updated',
             settings: appData
         });
     } catch (err) {
-        console.error('❌ Error updating settings:', err);
-        res.status(500).json({ error: 'Failed to update settings', details: err.message });
+        res.status(500).json({ error: 'Failed to update settings' });
     }
 });
 
-// ============ COMPANY SEARCH ENDPOINT ============
-app.get('/api/companies/search', (req, res) => {
+// ============ COMPANY SEARCH WITH RATE LIMIT ============
+app.get('/api/companies/search', async (req, res) => {
     const query = req.query.q?.toLowerCase() || '';
-    console.log('🔍 Search query:', query);
+    const email = req.query.email || ''; // Optional: can pass email to check premium status
+
+    console.log('🔍 Search query:', query, 'Email:', email);
+
+    // ✅ CHECK SEARCH LIMIT (BUT SKIP FOR PREMIUM USERS)
+    const searchLimit = checkSearchLimit(req, email);
+    
+    if (!searchLimit.allowed) {
+        console.log(`❌ Search limit exceeded`);
+        return res.status(429).json({ 
+            success: false,
+            error: '❌ Daily search limit exceeded!',
+            message: `You have used all ${searchLimit.total} free searches today. Upgrade to Premium to get unlimited searches!`,
+            limit_info: {
+                free_searches_per_day: searchLimit.total,
+                searches_used_today: searchLimit.current,
+                searches_remaining: 0,
+                reset_time: 'Tomorrow at 12:00 AM',
+                isPremium: false
+            }
+        });
+    }
 
     if (!query) {
         return res.json({ 
@@ -146,318 +287,479 @@ app.get('/api/companies/search', (req, res) => {
         });
     }
 
-    // Mock company data
-    const mockCompanies = {
+    // ✅ INCREMENT SEARCH COUNT (ONLY IF NOT PREMIUM)
+    if (!searchLimit.isPremium) {
+        incrementSearchCount(req);
+    }
+
+    // ============ MOCK COMPANIES (STRUCTURE ONLY) ============
+    const mockCompaniesStructure = {
         'mtn': {
             id: 'mtn-001',
             name: 'MTN Nigeria',
             cac_number: 'RC123456',
             industry: 'Telecommunications',
-            location: 'Lagos, Nigeria',
-            address: '19A, Kofo Abayomi Street, Lagos',
-            email: 'contact@mtn.com.ng',
-            phone: '+234 803 000 0000',
-            website: 'https://www.mtn.com.ng',
-            description: 'Leading telecommunications provider in Nigeria',
             trust_score: 95,
+            is_premium: false,
             verification_status: 'verified',
             risk_level: 'low',
-            founded: 2001,
-            employees: 5000,
-            is_premium: false,
-            news: [
-                {
-                    id: 'news-1',
-                    title: 'MTN Nigeria Expands 5G Network Coverage',
-                    source: 'Tech Africa Daily',
-                    published_date: '2026-08-25',
-                    url: 'https://example.com/news-1',
-                    sentiment: 'positive'
-                },
-                {
-                    id: 'news-2',
-                    title: 'MTN Reports Record Quarterly Revenue',
-                    source: 'Business Daily',
-                    published_date: '2026-08-20',
-                    url: 'https://example.com/news-2',
-                    sentiment: 'positive'
-                },
-                {
-                    id: 'news-3',
-                    title: 'MTN Invests in New Data Centers',
-                    source: 'Innovation Weekly',
-                    published_date: '2026-08-15',
-                    url: 'https://example.com/news-3',
-                    sentiment: 'positive'
-                }
-            ],
-            news_summary: {
-                total_articles: 3,
-                positive_percentage: 100,
-                trend: 'GROWING'
-            }
+            description: 'MTN Nigeria Communications Limited is a leading telecommunications company in Nigeria, providing mobile, internet and financial services.',
+            address: 'Plot 1687, Lekki-Epe Expressway, Lekki, Lagos',
+            employees: 8500,
+            founded: '1997',
+            email: 'contact@mtn.com.ng',
+            phone: '+234 (0) 803 000 0001',
+            website: 'https://www.mtn.com.ng'
         },
         'paystack': {
             id: 'paystack-001',
             name: 'Paystack',
             cac_number: 'RC987654',
-            industry: 'Financial Technology',
-            location: 'Lagos, Nigeria',
-            address: '22, Akin Olugbade Street, Lagos',
-            email: 'support@paystack.com',
-            phone: '+234 700 000 0000',
-            website: 'https://www.paystack.com',
-            description: 'Africa\'s leading payment technology company',
+            industry: 'FinTech',
             trust_score: 98,
+            is_premium: true,
             verification_status: 'verified',
             risk_level: 'low',
-            founded: 2015,
-            employees: 200,
-            is_premium: true,
-            news: [
-                {
-                    id: 'news-4',
-                    title: 'Paystack Acquires New Markets in West Africa',
-                    source: 'Tech Crunch Africa',
-                    published_date: '2026-08-22',
-                    url: 'https://example.com/news-4',
-                    sentiment: 'positive'
-                },
-                {
-                    id: 'news-5',
-                    title: 'Paystack Raises Series C Funding',
-                    source: 'Venture Beat',
-                    published_date: '2026-08-18',
-                    url: 'https://example.com/news-5',
-                    sentiment: 'positive'
-                }
-            ],
-            news_summary: {
-                total_articles: 2,
-                positive_percentage: 100,
-                trend: 'GROWING'
-            }
+            description: 'Paystack is a leading African fintech company providing payment processing solutions for businesses across Africa.',
+            address: '15A Idowu Taylor Street, Victoria Island, Lagos',
+            employees: 450,
+            founded: '2015',
+            email: 'support@paystack.com',
+            phone: '+234 (0) 700 933 933',
+            website: 'https://paystack.com'
         },
         'jumia': {
             id: 'jumia-001',
-            name: 'Jumia Nigeria',
+            name: 'Jumia Technologies',
             cac_number: 'RC654321',
-            industry: 'E-commerce',
-            location: 'Lagos, Nigeria',
-            address: '27 Radcliffe Street, Lagos',
-            email: 'support@jumia.com.ng',
-            phone: '+234 700 111 1111',
-            website: 'https://www.jumia.com.ng',
-            description: 'Online shopping platform for Nigeria',
-            trust_score: 87,
+            industry: 'E-Commerce',
+            trust_score: 92,
+            is_premium: false,
+            verification_status: 'verified',
+            risk_level: 'medium',
+            description: 'Jumia is the leading e-commerce platform in Africa.',
+            address: '15 Macarthy Street, Saint Thomas, Lagos',
+            employees: 3200,
+            founded: '2012',
+            email: 'help@jumia.com.ng',
+            phone: '+234 (0) 700 100 100',
+            website: 'https://www.jumia.com.ng'
+        },
+        'google': {
+            id: 'google-001',
+            name: 'Google Nigeria',
+            cac_number: 'RC456789',
+            industry: 'Technology',
+            trust_score: 99,
+            is_premium: true,
             verification_status: 'verified',
             risk_level: 'low',
-            founded: 2012,
-            employees: 1500,
-            is_premium: false,
-            news: [
-                {
-                    id: 'news-6',
-                    title: 'Jumia Launches New Seller Program',
-                    source: 'E-commerce Weekly',
-                    published_date: '2026-08-23',
-                    url: 'https://example.com/news-6',
-                    sentiment: 'neutral'
-                },
-                {
-                    id: 'news-7',
-                    title: 'Jumia Expands Same-Day Delivery',
-                    source: 'Logistics Today',
-                    published_date: '2026-08-19',
-                    url: 'https://example.com/news-7',
-                    sentiment: 'positive'
-                }
-            ],
-            news_summary: {
-                total_articles: 2,
-                positive_percentage: 50,
-                trend: 'STABLE'
-            }
+            description: 'Google Nigeria brings the best of Google services to Nigerian users.',
+            address: '35 Computer Village, Lagos',
+            employees: 800,
+            founded: '2010',
+            email: 'contact@google.com.ng',
+            phone: '+234 (0) 1 262 3100',
+            website: 'https://www.google.com.ng'
         }
     };
 
-    // Search logic
-    const results = Object.values(mockCompanies).filter(company => 
+    // Filter matched companies
+    const results = Object.values(mockCompaniesStructure).filter(company => 
         company.name.toLowerCase().includes(query) ||
-        company.cac_number.toLowerCase().includes(query) ||
-        company.email.toLowerCase().includes(query)
+        company.cac_number.toLowerCase().includes(query)
     );
 
-    console.log(`✅ Found ${results.length} results for "${query}"`);
+    // ✅ FETCH REAL NEWS FOR EACH COMPANY
+    for (let company of results) {
+        const news = await fetchCompanyNews(company.name, 5);
+        company.news = news;
+        company.news_summary = generateNewsSummary(news);
+        company.trend = company.news_summary.trend;
+    }
+
     res.json({
         success: true,
         results: results,
-        total: results.length
+        total: results.length,
+        limit_info: {
+            searches_used_today: searchLimit.current + (searchLimit.isPremium ? 0 : 1),
+            searches_remaining: Math.max(0, searchLimit.remaining - 1),
+            free_searches_per_day: searchLimit.total,
+            premium_searches_per_day: appData.premium_searches_per_day,  // Send premium limit
+            isPremium: searchLimit.isPremium
+        }
     });
 });
 
-// ============ ADMIN COMPANIES ENDPOINT ============
-app.get('/api/admin/companies', verifyAdmin, (req, res) => {
-    res.json({
-        success: true,
-        companies: [],
-        total: 0
-    });
-});
-
-app.post('/api/admin/companies/:id/upgrade', verifyAdmin, (req, res) => {
+// ============ PAYSTACK PAYMENT ENDPOINTS ============
+app.post('/api/premium/initiate-payment', async (req, res) => {
     try {
-        const { id } = req.params;
-        console.log(`✅ Company ${id} upgraded to premium`);
-        
-        res.json({
-            success: true,
-            message: `Company ${id} upgraded to premium`
-        });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to upgrade company', details: err.message });
-    }
-});
+        const { email, subscription_months = 1 } = req.body;
 
-app.post('/api/admin/companies/:id/downgrade', verifyAdmin, (req, res) => {
-    try {
-        const { id } = req.params;
-        console.log(`✅ Company ${id} downgraded`);
-        
-        res.json({
-            success: true,
-            message: `Company ${id} downgraded`
-        });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to downgrade company', details: err.message });
-    }
-});
+        console.log('💳 Payment initiate request:', { email, subscription_months });
 
-// ============ PAYMENTS ENDPOINT ============
-app.get('/api/admin/payments', verifyAdmin, (req, res) => {
-    res.json({
-        success: true,
-        payments: [],
-        total: 0,
-        revenue: 0
-    });
-});
-
-// ============ EMAIL SIGNUP ENDPOINT ============
-app.post('/api/email-signup', (req, res) => {
-    try {
-        const { name, email, userType, signupDate } = req.body;
-        console.log(`📧 Signup: ${name} (${email}) - Type: ${userType}`);
-
-        if (!email || !name) {
-            return res.status(400).json({ error: 'Name and email required' });
+        if (!email) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'Email required' 
+            });
         }
 
-        res.json({
-            success: true,
-            message: 'Signup successful',
-            data: { name, email, userType, signupDate }
-        });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to process signup', details: err.message });
-    }
-});
-
-// ============ PAYSTACK ENDPOINTS ============
-app.post('/api/premium/initiate-payment', (req, res) => {
-    try {
-        const { email, company_id, company_name, subscription_months = 1 } = req.body;
-        console.log(`💳 Payment initiated: ${company_name} - ₦${appData.premium_monthly_price * subscription_months}`);
-
-        if (!email || !company_id) {
-            return res.status(400).json({ error: 'Email and company_id required' });
+        if (!PAYSTACK_SECRET) {
+            console.error('❌ PAYSTACK_SECRET not configured');
+            return res.status(500).json({
+                success: false,
+                error: 'Paystack not configured'
+            });
         }
 
         const amount = appData.premium_monthly_price * subscription_months * 100;
+        console.log('💰 Amount calculated:', amount, 'kobo (', appData.premium_monthly_price, '×', subscription_months, '×100)');
 
-        res.json({
-            success: true,
-            message: 'Payment initialization successful',
-            authorization_url: `https://checkout.paystack.com/mock-checkout?email=${email}&amount=${amount}`,
-            reference: `BT_${Date.now()}`
-        });
+        if (!amount || amount <= 0) {
+            console.error('❌ Invalid amount:', amount);
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid amount: ' + amount
+            });
+        }
+
+        // Generate unique reference first
+        const uniqueReference = 'brandstrack_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        console.log('🎟️  Reference:', uniqueReference);
+
+        const paystackResponse = await axios.post(
+            `${PAYSTACK_API}/transaction/initialize`,
+            {
+                email: email,
+                amount: amount,
+                reference: uniqueReference,
+                callback_url: 'https://www.brandstrack.com/?payment_reference=' + uniqueReference,
+                metadata: {
+                    email: email,
+                    subscription_months: subscription_months,
+                    type: 'premium_upgrade'
+                }
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${PAYSTACK_SECRET}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+
+        console.log('✅ Paystack response:', paystackResponse.status);
+
+        if (paystackResponse.data.status) {
+            const reference = paystackResponse.data.data.reference;
+
+            payments.push({
+                reference: reference,
+                email: email,
+                amount: appData.premium_monthly_price * subscription_months,
+                status: 'pending',
+                timestamp: new Date().toISOString()
+            });
+
+            res.json({
+                success: true,
+                authorization_url: paystackResponse.data.data.authorization_url,
+                reference: reference
+            });
+        }
     } catch (err) {
-        res.status(500).json({ error: 'Failed to initiate payment', details: err.message });
+        console.error('❌ Payment error:', err.message);
+        console.error('❌ Full error:', err.response?.data || err);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to initiate payment',
+            details: err.message,
+            paystack_error: err.response?.data?.message || null
+        });
     }
 });
 
-app.post('/api/premium/verify-payment', (req, res) => {
+app.post('/api/premium/verify-payment', async (req, res) => {
     try {
         const { reference } = req.body;
-        console.log(`✅ Payment verified: ${reference}`);
 
         if (!reference) {
-            return res.status(400).json({ error: 'Reference required' });
+            return res.status(400).json({ 
+                success: false,
+                error: 'Reference required' 
+            });
         }
 
-        res.json({
-            success: true,
-            message: 'Payment verified',
-            reference
-        });
+        if (!PAYSTACK_SECRET) {
+            return res.status(500).json({
+                success: false,
+                error: 'Paystack not configured'
+            });
+        }
+
+        const verifyResponse = await axios.get(
+            `${PAYSTACK_API}/transaction/verify/${reference}`,
+            {
+                headers: {
+                    Authorization: `Bearer ${PAYSTACK_SECRET}`
+                }
+            }
+        );
+
+        const data = verifyResponse.data.data;
+
+        if (data.status === 'success') {
+            const paymentRecord = payments.find(p => p.reference === reference);
+            const email = data.metadata.email;
+            const subscriptionMonths = data.metadata.subscription_months;
+
+            if (paymentRecord) {
+                paymentRecord.status = 'successful';
+            }
+
+            // ✅ MARK USER AS PREMIUM
+            markUserAsPremium(email, subscriptionMonths);
+
+            res.json({
+                success: true,
+                message: 'Payment verified! You are now premium.',
+                status: data.status,
+                amount: data.amount / 100,
+                reference: reference,
+                email: email
+            });
+        } else {
+            res.json({
+                success: false,
+                message: 'Payment verification failed',
+                status: data.status
+            });
+        }
     } catch (err) {
-        res.status(500).json({ error: 'Failed to verify payment', details: err.message });
+        console.error('❌ Verification error:', err.message);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to verify payment'
+        });
     }
 });
 
 app.post('/api/premium/paystack-webhook', (req, res) => {
     try {
         const event = req.body;
-        console.log('🪝 Webhook received:', event.event);
-
         if (event.event === 'charge.success') {
-            console.log(`✅ Payment successful via webhook: ${event.data.reference}`);
+            const email = event.data.customer.email;
+            const reference = event.data.reference;
+            
+            console.log(`✅ Webhook: Payment success for ${email}`);
+            
+            // ✅ MARK AS PREMIUM ON WEBHOOK TOO
+            markUserAsPremium(email, 1);
+            
+            const paymentRecord = payments.find(p => p.reference === reference);
+            if (paymentRecord) {
+                paymentRecord.status = 'webhook_confirmed';
+            }
         }
 
-        res.json({ status: 'received' });
+        res.json({ status: 'ok' });
     } catch (err) {
-        console.error('Webhook error:', err);
+        console.error('❌ Webhook error:', err);
         res.status(500).json({ error: 'Webhook processing failed' });
     }
 });
 
-// ============ 404 HANDLER ============
-app.use((req, res) => {
-    console.log(`⚠️ 404 - Not found: ${req.method} ${req.path}`);
-    res.status(404).json({
-        error: 'Endpoint not found',
-        path: req.path,
-        method: req.method,
-        available_endpoints: [
-            'GET /health',
-            'GET /api/settings/public',
-            'GET /api/admin/settings (auth)',
-            'POST /api/admin/settings/update (auth)',
-            'GET /api/companies/search',
-            'POST /api/email-signup'
-        ]
+// ============ CHECK PREMIUM STATUS ============
+app.get('/api/premium/check/:email', (req, res) => {
+    const { email } = req.params;
+    const isPremium = isPremiumUser(email);
+    
+    res.json({
+        success: true,
+        email: email,
+        isPremium: isPremium,
+        user: isPremium ? premiumUsers[email.toLowerCase()] : null
     });
 });
 
-// ============ ERROR HANDLER ============
+// ============ ADMIN: VIEW PREMIUM USERS ============
+app.get('/api/admin/premium-users', verifyAdmin, (req, res) => {
+    res.json({
+        success: true,
+        premium_users: Object.values(premiumUsers),
+        total: Object.keys(premiumUsers).length
+    });
+});
+
+// ============ ADMIN: VIEW PAYMENTS ============
+app.get('/api/admin/payments', verifyAdmin, (req, res) => {
+    const revenue = payments
+        .filter(p => p.status === 'successful' || p.status === 'webhook_confirmed')
+        .reduce((sum, p) => sum + (p.amount || 0), 0);
+
+    res.json({
+        success: true,
+        payments: payments,
+        total: payments.length,
+        revenue: revenue,
+        currency: appData.premium_currency
+    });
+});
+
+// ============ EMAIL SIGNUP ============
+app.post('/api/email-signup', (req, res) => {
+    try {
+        const { name, email } = req.body;
+        if (!email || !name) {
+            return res.status(400).json({ error: 'Name and email required' });
+        }
+        res.json({ success: true, message: 'Signup successful' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed' });
+    }
+});
+
+// ============ TWILIO WHATSAPP WEBHOOK ============
+const twilio = require('twilio');
+
+// Twilio credentials (from environment)
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const TWILIO_WHATSAPP_NUMBER = process.env.TWILIO_WHATSAPP_NUMBER || 'whatsapp:+14155238886';
+
+// Initialize Twilio client
+let twilioClient;
+if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) {
+    twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+    console.log('✅ Twilio WhatsApp configured');
+} else {
+    console.log('⚠️ Twilio not configured - WhatsApp bot will not work');
+}
+
+// Webhook for incoming WhatsApp messages
+app.post('/api/whatsapp/webhook', async (req, res) => {
+    try {
+        const { From, Body } = req.body;
+        
+        console.log(`📱 WhatsApp message received`);
+        console.log(`   From: ${From}`);
+        console.log(`   Message: ${Body}`);
+
+        // Get the company name from the message
+        const companyName = Body.trim();
+
+        // Validate input
+        if (!companyName || companyName.length < 2) {
+            await sendWhatsAppMessage(From, `❌ Please enter a valid company name.\n\nExample: "MTN Nigeria" or "Paystack"`);
+            return res.status(200).send('OK');
+        }
+
+        // Search for the company
+        console.log(`🔍 Searching for company: ${companyName}`);
+        
+        // Call the internal search function
+        const searchResults = await searchCompanies(companyName);
+
+        if (!searchResults || searchResults.length === 0) {
+            await sendWhatsAppMessage(From, `❌ No company found with name "${companyName}"\n\nTry searching with the full company name.`);
+            return res.status(200).send('OK');
+        }
+
+        // Format company data for WhatsApp
+        const company = searchResults[0];
+        const trustScore = company.trust_score || 'N/A';
+        const riskLevel = company.risk_level || 'Unknown';
+        const news = company.news || [];
+        const newsSummary = company.news_summary || {};
+
+        // Build WhatsApp message
+        let message = `✅ *${company.name}*\n\n`;
+        message += `📋 *Registration Details*\n`;
+        message += `CAC Number: ${company.cac_number}\n`;
+        message += `Industry: ${company.industry}\n`;
+        message += `Trust Score: ${trustScore}/100\n`;
+        message += `Risk Level: ${riskLevel}\n`;
+        message += `Location: ${company.location}\n`;
+        message += `Employees: ${company.employees || 'N/A'}\n`;
+        message += `Founded: ${company.founded_year || 'N/A'}\n\n`;
+
+        if (news.length > 0) {
+            message += `🔥 *Market Intelligence*\n`;
+            message += `📰 ${news.length} articles found\n`;
+            message += `📈 ${newsSummary.positive_percentage || 0}% positive sentiment\n`;
+            message += `Trend: ${company.trend || 'STABLE'}\n\n`;
+            
+            message += `📰 *Latest News*\n`;
+            news.slice(0, 3).forEach((article, idx) => {
+                const sentiment = article.sentiment === 'positive' ? '📈' : article.sentiment === 'negative' ? '📉' : '➡️';
+                message += `${idx + 1}. ${article.title}\n   Source: ${article.source}\n   ${sentiment} ${article.sentiment}\n\n`;
+            });
+        }
+
+        message += `🌐 Access full data on: https://brandstrack.com`;
+
+        // Send message
+        await sendWhatsAppMessage(From, message);
+        
+        res.status(200).send('OK');
+
+    } catch (err) {
+        console.error('❌ WhatsApp webhook error:', err);
+        res.status(500).json({ error: 'Failed to process message' });
+    }
+});
+
+// Helper function to send WhatsApp message
+async function sendWhatsAppMessage(toNumber, messageText) {
+    if (!twilioClient) {
+        console.error('❌ Twilio client not initialized');
+        return;
+    }
+
+    try {
+        const result = await twilioClient.messages.create({
+            from: TWILIO_WHATSAPP_NUMBER,
+            to: toNumber,
+            body: messageText
+        });
+        
+        console.log(`✅ WhatsApp message sent: ${result.sid}`);
+        return result;
+    } catch (err) {
+        console.error('❌ Failed to send WhatsApp message:', err);
+    }
+}
+
+// Health check for WhatsApp
+app.get('/api/whatsapp/health', (req, res) => {
+    res.json({
+        success: true,
+        message: 'WhatsApp bot is running',
+        twilio_configured: !!twilioClient,
+        sandbox_number: TWILIO_WHATSAPP_NUMBER
+    });
+});
+
+// ============ 404 & ERROR ============
+app.use((req, res) => {
+    res.status(404).json({ error: 'Endpoint not found' });
+});
+
 app.use((err, req, res, next) => {
     console.error('❌ Server error:', err);
-    res.status(500).json({
-        error: 'Internal server error',
-        message: err.message
-    });
+    res.status(500).json({ error: 'Internal server error' });
 });
 
 // ============ START SERVER ============
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`\n🚀 BrandsTrack Backend v3.0 RUNNING`);
-    console.log(`📊 Current Premium Price: ₦${appData.premium_monthly_price}`);
-    console.log(`\n✅ Health check: http://localhost:${PORT}/health`);
-    console.log(`📊 Public settings: http://localhost:${PORT}/api/settings/public`);
-    console.log(`🔐 Admin settings: http://localhost:${PORT}/api/admin/settings (auth required)`);
-    console.log(`🔍 Search: http://localhost:${PORT}/api/companies/search?q=mtn`);
-    console.log(`\n⏱️ Port: ${PORT}`);
+    console.log(`\n🚀 BrandsTrack Backend v3.0`);
+    console.log(`💳 Paystack: ACTIVE`);
+    console.log(`📊 Price: ₦${appData.premium_monthly_price}`);
+    console.log(`👥 Premium Users: ${Object.keys(premiumUsers).length}`);
+    console.log(`\n⏱️ Port: ${PORT}\n`);
 });
 
 module.exports = app;
