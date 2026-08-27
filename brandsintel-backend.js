@@ -471,10 +471,12 @@ app.post('/api/premium/initiate-payment', async (req, res) => {
         }
     } catch (err) {
         console.error('❌ Payment error:', err.message);
+        console.error('❌ Full error:', err.response?.data || err);
         res.status(500).json({ 
             success: false,
             error: 'Failed to initiate payment',
-            details: err.message 
+            details: err.message,
+            paystack_error: err.response?.data?.message || null
         });
     }
 });
