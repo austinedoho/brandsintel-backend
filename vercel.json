@@ -1,0 +1,5 @@
+{
+  "buildCommand": "echo 'Static deployment'",
+  "outputDirectory": ".",
+  "cleanUrls": false
+}
