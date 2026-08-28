@@ -1,7 +1,8 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-require('dotenv').config();
+const premiumBrandRoutes = require('./premium-brands-backend-routes.js');
 
 const app = express();
 
@@ -751,6 +752,9 @@ app.get('/api/whatsapp/health', (req, res) => {
         sandbox_number: TWILIO_WHATSAPP_NUMBER
     });
 });
+
+// ============ PREMIUM BRAND ROUTES (MUST BE BEFORE 404!) ============
+app.use('/', premiumBrandRoutes);
 
 // ============ 404 & ERROR ============
 app.use((req, res) => {
