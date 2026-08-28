@@ -765,7 +765,7 @@ app.use((err, req, res, next) => {
 // ============ START SERVER ============
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`\n🚀 BrandsTrack Backend v3.0`);
+    console.log(`\n🚀 BrandsTrack Backend v3.0 - SECURE & AUTO-DEPLOYED`);
     console.log(`💳 Paystack: ACTIVE`);
     console.log(`📊 Price: ₦${appData.premium_monthly_price}`);
     console.log(`👥 Premium Users: ${Object.keys(premiumUsers).length}`);
