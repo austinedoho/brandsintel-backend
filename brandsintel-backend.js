@@ -49,7 +49,7 @@ async function fetchCompanyNews(companyName, limit = 5) {
         return response.data.articles.map(article => ({
             title: article.title,
             source: article.source.name,
-            url: article.url, // ✅ REAL URL from News API
+            url: article.url,
             published_date: article.publishedAt,
             sentiment: Math.random() > 0.5 ? 'positive' : (Math.random() > 0.5 ? 'negative' : 'neutral')
         }));
@@ -82,19 +82,20 @@ function generateNewsSummary(articles) {
         trend: trend
     };
 }
+
 // ==========================================
 let appData = {
     premium_monthly_price: parseInt(process.env.PREMIUM_PRICE || '30000'),
     premium_currency: 'NGN',
     free_searches_per_day: 3,
-    premium_searches_per_day: 50,  // Premium users get 50 searches/day (configurable by admin)
+    premium_searches_per_day: 50,
     articles_per_company: 9
 };
 
 let payments = [];
 let companies = {};
-let searchTracks = {}; // { "ip": { date, count } }
-let premiumUsers = {}; // { "email@example.com": { paid: true, until: "2026-09-27" } }
+let searchTracks = {};
+let premiumUsers = {};
 
 console.log('💾 Initial settings loaded:', appData.premium_monthly_price);
 
@@ -104,7 +105,6 @@ function isPremiumUser(email) {
     const user = premiumUsers[email.toLowerCase()];
     if (!user) return false;
     
-    // Check if subscription is still valid
     if (user.until && new Date(user.until) < new Date()) {
         delete premiumUsers[email.toLowerCase()];
         return false;
@@ -139,11 +139,10 @@ function getTodayDate() {
 }
 
 function checkSearchLimit(req, email) {
-    // ✅ PREMIUM USERS GET HIGHER SEARCH LIMIT (not unlimited)
     if (email && isPremiumUser(email)) {
         console.log(`✅ Premium user ${email} - ${appData.premium_searches_per_day} searches/day`);
         return {
-            allowed: true,  // For now, we assume premium users haven't hit their (higher) limit
+            allowed: true,
             remaining: appData.premium_searches_per_day,
             total: appData.premium_searches_per_day,
             current: 0,
@@ -188,6 +187,78 @@ function incrementSearchCount(req) {
     
     searchTracks[clientIP].count++;
 }
+
+// ============ MOCK COMPANIES DATA ============
+const mockCompaniesStructure = {
+    'mtn': {
+        id: 'mtn-001',
+        name: 'MTN Nigeria',
+        cac_number: 'RC123456',
+        industry: 'Telecommunications',
+        trust_score: 95,
+        is_premium: false,
+        verification_status: 'verified',
+        risk_level: 'low',
+        description: 'MTN Nigeria Communications Limited is a leading telecommunications company in Nigeria.',
+        address: 'Plot 1687, Lekki-Epe Expressway, Lekki, Lagos',
+        employees: 8500,
+        founded: '1997',
+        email: 'contact@mtn.com.ng',
+        phone: '+234 (0) 803 000 0001',
+        website: 'https://www.mtn.com.ng'
+    },
+    'paystack': {
+        id: 'paystack-001',
+        name: 'Paystack',
+        cac_number: 'RC987654',
+        industry: 'FinTech',
+        trust_score: 98,
+        is_premium: true,
+        verification_status: 'verified',
+        risk_level: 'low',
+        description: 'Paystack is a leading African fintech company providing payment processing solutions.',
+        address: '15A Idowu Taylor Street, Victoria Island, Lagos',
+        employees: 450,
+        founded: '2015',
+        email: 'support@paystack.com',
+        phone: '+234 (0) 700 933 933',
+        website: 'https://paystack.com'
+    },
+    'jumia': {
+        id: 'jumia-001',
+        name: 'Jumia Technologies',
+        cac_number: 'RC654321',
+        industry: 'E-Commerce',
+        trust_score: 92,
+        is_premium: false,
+        verification_status: 'verified',
+        risk_level: 'medium',
+        description: 'Jumia is the leading e-commerce platform in Africa.',
+        address: '15 Macarthy Street, Saint Thomas, Lagos',
+        employees: 3200,
+        founded: '2012',
+        email: 'help@jumia.com.ng',
+        phone: '+234 (0) 700 100 100',
+        website: 'https://www.jumia.com.ng'
+    },
+    'google': {
+        id: 'google-001',
+        name: 'Google Nigeria',
+        cac_number: 'RC456789',
+        industry: 'Technology',
+        trust_score: 99,
+        is_premium: true,
+        verification_status: 'verified',
+        risk_level: 'low',
+        description: 'Google Nigeria brings the best of Google services to Nigerian users.',
+        address: '35 Computer Village, Lagos',
+        employees: 800,
+        founded: '2010',
+        email: 'contact@google.com.ng',
+        phone: '+234 (0) 1 262 3100',
+        website: 'https://www.google.com.ng'
+    }
+};
 
 // ============ HEALTH CHECK ============
 app.get('/health', (req, res) => {
@@ -257,11 +328,10 @@ app.post('/api/admin/settings/update', verifyAdmin, (req, res) => {
 // ============ COMPANY SEARCH WITH RATE LIMIT ============
 app.get('/api/companies/search', async (req, res) => {
     const query = req.query.q?.toLowerCase() || '';
-    const email = req.query.email || ''; // Optional: can pass email to check premium status
+    const email = req.query.email || '';
 
     console.log('🔍 Search query:', query, 'Email:', email);
 
-    // ✅ CHECK SEARCH LIMIT (BUT SKIP FOR PREMIUM USERS)
     const searchLimit = checkSearchLimit(req, email);
     
     if (!searchLimit.allowed) {
@@ -288,90 +358,15 @@ app.get('/api/companies/search', async (req, res) => {
         });
     }
 
-    // ✅ INCREMENT SEARCH COUNT (ONLY IF NOT PREMIUM)
     if (!searchLimit.isPremium) {
         incrementSearchCount(req);
     }
 
-    // ============ MOCK COMPANIES (STRUCTURE ONLY) ============
-    const mockCompaniesStructure = {
-        'mtn': {
-            id: 'mtn-001',
-            name: 'MTN Nigeria',
-            cac_number: 'RC123456',
-            industry: 'Telecommunications',
-            trust_score: 95,
-            is_premium: false,
-            verification_status: 'verified',
-            risk_level: 'low',
-            description: 'MTN Nigeria Communications Limited is a leading telecommunications company in Nigeria, providing mobile, internet and financial services.',
-            address: 'Plot 1687, Lekki-Epe Expressway, Lekki, Lagos',
-            employees: 8500,
-            founded: '1997',
-            email: 'contact@mtn.com.ng',
-            phone: '+234 (0) 803 000 0001',
-            website: 'https://www.mtn.com.ng'
-        },
-        'paystack': {
-            id: 'paystack-001',
-            name: 'Paystack',
-            cac_number: 'RC987654',
-            industry: 'FinTech',
-            trust_score: 98,
-            is_premium: true,
-            verification_status: 'verified',
-            risk_level: 'low',
-            description: 'Paystack is a leading African fintech company providing payment processing solutions for businesses across Africa.',
-            address: '15A Idowu Taylor Street, Victoria Island, Lagos',
-            employees: 450,
-            founded: '2015',
-            email: 'support@paystack.com',
-            phone: '+234 (0) 700 933 933',
-            website: 'https://paystack.com'
-        },
-        'jumia': {
-            id: 'jumia-001',
-            name: 'Jumia Technologies',
-            cac_number: 'RC654321',
-            industry: 'E-Commerce',
-            trust_score: 92,
-            is_premium: false,
-            verification_status: 'verified',
-            risk_level: 'medium',
-            description: 'Jumia is the leading e-commerce platform in Africa.',
-            address: '15 Macarthy Street, Saint Thomas, Lagos',
-            employees: 3200,
-            founded: '2012',
-            email: 'help@jumia.com.ng',
-            phone: '+234 (0) 700 100 100',
-            website: 'https://www.jumia.com.ng'
-        },
-        'google': {
-            id: 'google-001',
-            name: 'Google Nigeria',
-            cac_number: 'RC456789',
-            industry: 'Technology',
-            trust_score: 99,
-            is_premium: true,
-            verification_status: 'verified',
-            risk_level: 'low',
-            description: 'Google Nigeria brings the best of Google services to Nigerian users.',
-            address: '35 Computer Village, Lagos',
-            employees: 800,
-            founded: '2010',
-            email: 'contact@google.com.ng',
-            phone: '+234 (0) 1 262 3100',
-            website: 'https://www.google.com.ng'
-        }
-    };
-
-    // Filter matched companies
     const results = Object.values(mockCompaniesStructure).filter(company => 
         company.name.toLowerCase().includes(query) ||
         company.cac_number.toLowerCase().includes(query)
     );
 
-    // ✅ FETCH REAL NEWS FOR EACH COMPANY
     for (let company of results) {
         const news = await fetchCompanyNews(company.name, 5);
         company.news = news;
@@ -387,7 +382,7 @@ app.get('/api/companies/search', async (req, res) => {
             searches_used_today: searchLimit.current + (searchLimit.isPremium ? 0 : 1),
             searches_remaining: Math.max(0, searchLimit.remaining - 1),
             free_searches_per_day: searchLimit.total,
-            premium_searches_per_day: appData.premium_searches_per_day,  // Send premium limit
+            premium_searches_per_day: appData.premium_searches_per_day,
             isPremium: searchLimit.isPremium
         }
     });
@@ -426,7 +421,6 @@ app.post('/api/premium/initiate-payment', async (req, res) => {
             });
         }
 
-        // Generate unique reference first
         const uniqueReference = 'brandstrack_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         console.log('🎟️  Reference:', uniqueReference);
 
@@ -520,7 +514,6 @@ app.post('/api/premium/verify-payment', async (req, res) => {
                 paymentRecord.status = 'successful';
             }
 
-            // ✅ MARK USER AS PREMIUM
             markUserAsPremium(email, subscriptionMonths);
 
             res.json({
@@ -556,7 +549,6 @@ app.post('/api/premium/paystack-webhook', (req, res) => {
             
             console.log(`✅ Webhook: Payment success for ${email}`);
             
-            // ✅ MARK AS PREMIUM ON WEBHOOK TOO
             markUserAsPremium(email, 1);
             
             const paymentRecord = payments.find(p => p.reference === reference);
@@ -625,12 +617,10 @@ app.post('/api/email-signup', (req, res) => {
 // ============ TWILIO WHATSAPP WEBHOOK ============
 const twilio = require('twilio');
 
-// Twilio credentials (from environment)
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_WHATSAPP_NUMBER = process.env.TWILIO_WHATSAPP_NUMBER || 'whatsapp:+14155238886';
 
-// Initialize Twilio client
 let twilioClient;
 if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) {
     twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
@@ -639,7 +629,7 @@ if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) {
     console.log('⚠️ Twilio not configured - WhatsApp bot will not work');
 }
 
-// Webhook for incoming WhatsApp messages
+// ============ WHATSAPP WEBHOOK - FIXED ✅ ============
 app.post('/api/whatsapp/webhook', async (req, res) => {
     try {
         const { From, Body } = req.body;
@@ -648,62 +638,39 @@ app.post('/api/whatsapp/webhook', async (req, res) => {
         console.log(`   From: ${From}`);
         console.log(`   Message: ${Body}`);
 
-        // Get the company name from the message
+        if (!Body) {
+            console.error('❌ No message body received');
+            return res.status(400).json({ error: 'No message body' });
+        }
+
         const companyName = Body.trim();
 
-        // Validate input
         if (!companyName || companyName.length < 2) {
             await sendWhatsAppMessage(From, `❌ Please enter a valid company name.\n\nExample: "MTN Nigeria" or "Paystack"`);
             return res.status(200).send('OK');
         }
 
-        // Search for the company
         console.log(`🔍 Searching for company: ${companyName}`);
         
-        // Call the internal search function
-        const searchResults = await searchCompanies(companyName);
+        const searchKey = companyName.toLowerCase();
+        const company = mockCompaniesStructure[searchKey];
 
-        if (!searchResults || searchResults.length === 0) {
-            await sendWhatsAppMessage(From, `❌ No company found with name "${companyName}"\n\nTry searching with the full company name.`);
+        if (!company) {
+            const partialMatch = Object.values(mockCompaniesStructure).find(c =>
+                c.name.toLowerCase().includes(searchKey) ||
+                c.cac_number.toLowerCase().includes(searchKey)
+            );
+
+            if (!partialMatch) {
+                await sendWhatsAppMessage(From, `❌ No company found with name "${companyName}"\n\nTry: MTN Nigeria, Paystack, Jumia, or Google Nigeria`);
+                return res.status(200).send('OK');
+            }
+
+            await sendCompanyInfoViaWhatsApp(From, partialMatch);
             return res.status(200).send('OK');
         }
 
-        // Format company data for WhatsApp
-        const company = searchResults[0];
-        const trustScore = company.trust_score || 'N/A';
-        const riskLevel = company.risk_level || 'Unknown';
-        const news = company.news || [];
-        const newsSummary = company.news_summary || {};
-
-        // Build WhatsApp message
-        let message = `✅ *${company.name}*\n\n`;
-        message += `📋 *Registration Details*\n`;
-        message += `CAC Number: ${company.cac_number}\n`;
-        message += `Industry: ${company.industry}\n`;
-        message += `Trust Score: ${trustScore}/100\n`;
-        message += `Risk Level: ${riskLevel}\n`;
-        message += `Location: ${company.location}\n`;
-        message += `Employees: ${company.employees || 'N/A'}\n`;
-        message += `Founded: ${company.founded_year || 'N/A'}\n\n`;
-
-        if (news.length > 0) {
-            message += `🔥 *Market Intelligence*\n`;
-            message += `📰 ${news.length} articles found\n`;
-            message += `📈 ${newsSummary.positive_percentage || 0}% positive sentiment\n`;
-            message += `Trend: ${company.trend || 'STABLE'}\n\n`;
-            
-            message += `📰 *Latest News*\n`;
-            news.slice(0, 3).forEach((article, idx) => {
-                const sentiment = article.sentiment === 'positive' ? '📈' : article.sentiment === 'negative' ? '📉' : '➡️';
-                message += `${idx + 1}. ${article.title}\n   Source: ${article.source}\n   ${sentiment} ${article.sentiment}\n\n`;
-            });
-        }
-
-        message += `🌐 Access full data on: https://brandstrack.com`;
-
-        // Send message
-        await sendWhatsAppMessage(From, message);
-        
+        await sendCompanyInfoViaWhatsApp(From, company);
         res.status(200).send('OK');
 
     } catch (err) {
@@ -712,7 +679,49 @@ app.post('/api/whatsapp/webhook', async (req, res) => {
     }
 });
 
-// Helper function to send WhatsApp message
+// ============ HELPER: SEND COMPANY INFO VIA WHATSAPP ============
+async function sendCompanyInfoViaWhatsApp(toNumber, company) {
+    try {
+        const news = await fetchCompanyNews(company.name, 3);
+        const newsSummary = generateNewsSummary(news);
+
+        let message = `✅ *${company.name}*\n\n`;
+        message += `📋 *Registration Details*\n`;
+        message += `CAC Number: ${company.cac_number}\n`;
+        message += `Industry: ${company.industry}\n`;
+        message += `Trust Score: ${company.trust_score}/100\n`;
+        message += `Risk Level: ${company.risk_level.toUpperCase()}\n`;
+        message += `Location: ${company.address.split(',').pop().trim()}\n`;
+        message += `Employees: ${company.employees.toLocaleString()}\n`;
+        message += `Founded: ${company.founded}\n\n`;
+
+        if (news.length > 0) {
+            message += `🔥 *Market Intelligence*\n`;
+            message += `📰 ${news.length} articles found\n`;
+            message += `📈 ${newsSummary.positive_percentage}% positive sentiment\n`;
+            message += `Trend: ${newsSummary.trend}\n\n`;
+            
+            message += `📰 *Latest News*\n`;
+            news.forEach((article, idx) => {
+                const sentiment = article.sentiment === 'positive' ? '📈' : article.sentiment === 'negative' ? '📉' : '➡️';
+                message += `${idx + 1}. ${article.title.substring(0, 50)}...\n   ${sentiment} ${article.sentiment}\n\n`;
+            });
+        } else {
+            message += `📰 *Market Intelligence*\n`;
+            message += `No recent news articles found.\n\n`;
+        }
+
+        message += `🌐 Access full data: https://brandstrack.com`;
+
+        await sendWhatsAppMessage(toNumber, message);
+        console.log(`✅ Company info sent for ${company.name}`);
+    } catch (err) {
+        console.error('❌ Error sending company info:', err);
+        await sendWhatsAppMessage(toNumber, '❌ Error retrieving company information. Please try again.');
+    }
+}
+
+// ============ SEND WHATSAPP MESSAGE ============
 async function sendWhatsAppMessage(toNumber, messageText) {
     if (!twilioClient) {
         console.error('❌ Twilio client not initialized');
@@ -733,7 +742,7 @@ async function sendWhatsAppMessage(toNumber, messageText) {
     }
 }
 
-// Health check for WhatsApp
+// ============ WHATSAPP HEALTH CHECK ============
 app.get('/api/whatsapp/health', (req, res) => {
     res.json({
         success: true,
