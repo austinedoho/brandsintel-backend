@@ -303,7 +303,18 @@ async function sendWhatsAppMessage(toNumber, messageText) {
         console.error('Failed to send WhatsApp message:', err);
     }
 }
-
+// ============ PUBLIC SETTINGS ENDPOINT ============
+app.get('/api/settings/public', (req, res) => {
+    res.json({ 
+        success: true, 
+        settings: {
+            premium_monthly_price: appData.premium_monthly_price || 30000,
+            free_searches_per_day: appData.free_searches_per_day || 3,
+            articles_per_company: appData.articles_per_company || 5,
+            premium_currency: appData.premium_currency || 'NGN'
+        }
+    });
+});
 // ============ WHATSAPP HEALTH CHECK ============
 app.get('/api/whatsapp/health', (req, res) => {
     res.json({
