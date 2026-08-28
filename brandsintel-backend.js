@@ -8,14 +8,14 @@ const axios = require('axios');
 // ============ CONFIG ============
 const app = express();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'BrandsIntel2024';
-const NEWS_API_KEY = process.env.NEWS_API_KEY || '360cee0702dd4e5589f019d6f5033760';
-const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET || 'sk_live_e68e95f7aaf1953b57182098ecbd554ab0a7eef0';
-const PAYSTACK_PUBLIC = process.env.PAYSTACK_PUBLIC || 'pk_live_f50aba470014c265bac4a6e2697149136638c76f';
-const TWILIO_SID = process.env.TWILIO_SID || 'ACf5640041b8cc03f0068dec624c806797';
-const TWILIO_TOKEN = process.env.TWILIO_TOKEN || 'b8800271b597eeb8b4aa307694cdeefb';
+const NEWS_API_KEY = process.env.NEWS_API_KEY || 'demo-key';
+const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
+const PAYSTACK_PUBLIC = process.env.PAYSTACK_PUBLIC;
+const TWILIO_SID = process.env.TWILIO_SID;
+const TWILIO_TOKEN = process.env.TWILIO_TOKEN;
 const TWILIO_WHATSAPP_NUMBER = process.env.TWILIO_WHATSAPP_NUMBER || 'whatsapp:+14155238886';
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://edgxorvnddazggvrxixs.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVkZ3hvcnZuZGRhemdndnJ4aXhzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDk3MzA4NzUsImV4cCI6MjAyNTMwNjg3NX0.0d36Ay1g45_b0iI_VvLx2OJx24Iq_9iq1hgV9aZCn_w';
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;process.env.SUPABASE_KEY;'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVkZ3hvcnZuZGRhemdndnJ4aXhzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDk3MzA4NzUsImV4cCI6MjAyNTMwNjg3NX0.0d36Ay1g45_b0iI_VvLx2OJx24Iq_9iq1hgV9aZCn_w';
 
 // ============ MIDDLEWARE ============
 app.use(express.json());
