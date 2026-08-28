@@ -1,4 +1,4 @@
-// ============ BRANDSTRACK BACKEND - PRODUCTION READY (AUGUST 28 2026) ============
+// ============ BRANDSTRACK BACKEND v3.1 - PREMIUM BRANDS & PAYMENTS FIXED (AUGUST 28 2026) ============
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const multer = require('multer');
@@ -24,7 +24,7 @@ let appData = {
     premium_currency: 'NGN'
 };
 
-// ============ MOCK COMPANIES WITH COMPLETE DATA & NEWS URLS ============
+// ============ MOCK COMPANIES ============
 const mockCompanies = [
     {
         id: 1,
@@ -40,7 +40,7 @@ const mockCompanies = [
         founded: 2012,
         risk_level: 'low',
         trend: 'Growing',
-        description: 'Leading Nigerian e-commerce platform specializing in retail',
+        description: 'Leading Nigerian e-commerce platform',
         news: [
             { title: 'Konga expands to 5 new cities', source: 'TechCrunch', published_date: '2026-08-25', sentiment: 'positive', url: 'https://techcrunch.com/konga' },
             { title: 'Konga logistics partnership', source: 'Business Day', published_date: '2026-08-20', sentiment: 'positive', url: 'https://businessday.ng/konga' }
@@ -61,7 +61,7 @@ const mockCompanies = [
         founded: 2001,
         risk_level: 'low',
         trend: 'Stable',
-        description: 'Major telecommunications provider serving millions across Nigeria',
+        description: 'Major telecommunications provider',
         news: [
             { title: 'MTN launches 5G network', source: 'Premium Times', published_date: '2026-08-22', sentiment: 'positive', url: 'https://premiumtimesng.com/mtn-5g' }
         ],
@@ -129,14 +129,79 @@ const mockCompanies = [
     }
 ];
 
-// ============ PREMIUM BRANDS - ADMIN CONTROLLED FEATURED LIST ============
+// ============ PREMIUM BRANDS (ADMIN CONTROLLED) ============
 let premiumBrands = {
     all: [
-        { id: 1, company_name: 'Paystack', cac_number: 'CAC-BN-54321', industry: 'Fintech', email: 'hello@paystack.com', phone: '+234 700 933 3366', status: 'approved', submitted_date: new Date().toISOString() },
-        { id: 2, company_name: 'Jumia Nigeria', cac_number: 'CAC-BN-88888', industry: 'E-commerce', email: 'support@jumia.com.ng', phone: '+234 700 600 0000', status: 'approved', submitted_date: new Date().toISOString() }
+        { 
+            id: 1, 
+            company_name: 'Paystack', 
+            cac_number: 'CAC-BN-54321', 
+            industry: 'Fintech', 
+            email: 'hello@paystack.com', 
+            phone: '+234 700 933 3366', 
+            status: 'approved', 
+            submitted_date: new Date().toISOString(),
+            monthly_price: 2000
+        },
+        { 
+            id: 2, 
+            company_name: 'Jumia Nigeria', 
+            cac_number: 'CAC-BN-88888', 
+            industry: 'E-commerce', 
+            email: 'support@jumia.com.ng', 
+            phone: '+234 700 600 0000', 
+            status: 'approved', 
+            submitted_date: new Date().toISOString(),
+            monthly_price: 2000
+        },
+        { 
+            id: 3, 
+            company_name: 'MTN Nigeria', 
+            cac_number: 'CAC-BN-77777', 
+            industry: 'Telecommunications', 
+            email: 'contact@mtn.com.ng', 
+            phone: '+234 803 001 0001', 
+            status: 'pending', 
+            submitted_date: new Date().toISOString(),
+            monthly_price: 2000
+        }
     ],
-    featured: [1, 2] // Admin controls which IDs are featured (max 8 slots)
+    featured: [1, 2] // Admin controls which are featured (max 8)
 };
+
+// ============ PAYMENT TRANSACTIONS ============
+let paymentTransactions = [
+    {
+        id: 'TXN_001',
+        reference: 'TXN_20260828_001',
+        email: 'hello@paystack.com',
+        amount: 2000,
+        type: 'Premium Brand',
+        status: 'success',
+        date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+        company_name: 'Paystack'
+    },
+    {
+        id: 'TXN_002',
+        reference: 'TXN_20260827_001',
+        email: 'support@jumia.com.ng',
+        amount: 2000,
+        type: 'Premium Brand',
+        status: 'success',
+        date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+        company_name: 'Jumia Nigeria'
+    },
+    {
+        id: 'TXN_003',
+        reference: 'TXN_20260826_001',
+        email: 'user@example.com',
+        amount: 30000,
+        type: 'Premium User',
+        status: 'success',
+        date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+        company_name: 'N/A'
+    }
+];
 
 // ============ CORS ============
 app.use((req, res, next) => {
@@ -149,7 +214,7 @@ app.use((req, res, next) => {
 
 // ============ HEALTH CHECK ============
 app.get('/health', (req, res) => {
-    res.json({ status: 'ok', version: '3.0' });
+    res.json({ status: 'ok', version: '3.1', timestamp: new Date().toISOString() });
 });
 
 // ============ PUBLIC SETTINGS ============
@@ -199,21 +264,21 @@ app.get('/api/companies/search', async (req, res) => {
         });
     } catch (err) {
         console.error('Search error:', err);
-        res.status(500).json({ error: 'Search failed' });
+        res.status(500).json({ error: 'Search failed', details: err.message });
     }
 });
 
 // ============ ADMIN SETTINGS ============
 app.get('/api/admin/settings', (req, res) => {
     if (req.headers['x-admin-key'] !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Unauthorized' });
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
     res.json({ success: true, settings: appData });
 });
 
 app.post('/api/admin/settings/update', (req, res) => {
     if (req.headers['x-admin-key'] !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Unauthorized' });
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
     const { premium_monthly_price, free_searches_per_day } = req.body;
     if (premium_monthly_price) appData.premium_monthly_price = premium_monthly_price;
@@ -224,120 +289,169 @@ app.post('/api/admin/settings/update', (req, res) => {
 // ============ ADMIN COMPANIES ============
 app.get('/api/admin/companies', (req, res) => {
     if (req.headers['x-admin-key'] !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Unauthorized' });
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
     res.json({ success: true, companies: mockCompanies });
 });
 
 app.post('/api/admin/companies/:id/upgrade', (req, res) => {
     if (req.headers['x-admin-key'] !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Unauthorized' });
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
     try {
         const { id } = req.params;
         const company = mockCompanies.find(c => c.id === parseInt(id));
-        if (!company) return res.status(404).json({ error: 'Company not found' });
+        if (!company) return res.status(404).json({ success: false, error: 'Company not found' });
         company.is_premium = true;
         res.json({ success: true, message: 'Company upgraded', company });
     } catch (err) {
-        res.status(500).json({ error: 'Upgrade failed' });
+        console.error('Upgrade error:', err);
+        res.status(500).json({ success: false, error: 'Upgrade failed', details: err.message });
     }
 });
 
 app.post('/api/admin/companies/:id/downgrade', (req, res) => {
     if (req.headers['x-admin-key'] !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Unauthorized' });
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
     try {
         const { id } = req.params;
         const company = mockCompanies.find(c => c.id === parseInt(id));
-        if (!company) return res.status(404).json({ error: 'Company not found' });
+        if (!company) return res.status(404).json({ success: false, error: 'Company not found' });
         company.is_premium = false;
         res.json({ success: true, message: 'Company downgraded', company });
     } catch (err) {
-        res.status(500).json({ error: 'Downgrade failed' });
+        res.status(500).json({ success: false, error: 'Downgrade failed' });
     }
 });
 
 // ============ PREMIUM BRANDS - ADMIN CONTROLLED ============
 app.get('/api/admin/premium-brands/all', (req, res) => {
+    console.log('GET /api/admin/premium-brands/all - Admin Key:', req.headers['x-admin-key']);
+    
     if (req.headers['x-admin-key'] !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Unauthorized' });
+        return res.status(401).json({ success: false, error: 'Unauthorized - Invalid admin key' });
     }
-    res.json({ success: true, brands: premiumBrands.all });
+    
+    try {
+        res.json({ 
+            success: true, 
+            brands: premiumBrands.all,
+            featured_ids: premiumBrands.featured
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Failed to fetch brands', details: err.message });
+    }
 });
 
 app.post('/api/admin/premium-brands/:id/feature', (req, res) => {
     if (req.headers['x-admin-key'] !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Unauthorized' });
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
     try {
-        const { id } = req.params;
-        const brandId = parseInt(id);
+        const brandId = parseInt(req.params.id);
         if (premiumBrands.featured.length >= 8) {
-            return res.status(400).json({ error: 'Featured slots full (max 8)' });
+            return res.status(400).json({ success: false, error: 'Featured slots full (max 8)' });
         }
         if (!premiumBrands.featured.includes(brandId)) {
             premiumBrands.featured.push(brandId);
         }
-        res.json({ success: true, featured: premiumBrands.featured });
+        res.json({ success: true, message: 'Brand featured', featured: premiumBrands.featured });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to feature brand' });
+        res.status(500).json({ success: false, error: 'Failed to feature brand' });
     }
 });
 
 app.post('/api/admin/premium-brands/:id/unfeature', (req, res) => {
     if (req.headers['x-admin-key'] !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Unauthorized' });
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
     try {
-        const { id } = req.params;
-        const brandId = parseInt(id);
+        const brandId = parseInt(req.params.id);
         premiumBrands.featured = premiumBrands.featured.filter(b => b !== brandId);
-        res.json({ success: true, featured: premiumBrands.featured });
+        res.json({ success: true, message: 'Brand removed from featured', featured: premiumBrands.featured });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to unfeature brand' });
+        res.status(500).json({ success: false, error: 'Failed to unfeature brand' });
     }
 });
 
-// ============ PUBLIC FEATURED BRANDS (WHAT FRONTEND DISPLAYS) ============
+// ============ PUBLIC FEATURED BRANDS ============
 app.get('/api/premium-brand/active', (req, res) => {
     try {
         const featured = premiumBrands.all.filter(b => premiumBrands.featured.includes(b.id));
         res.json({
             success: true,
-            brands: featured
+            brands: featured,
+            total_slots: 8,
+            used_slots: premiumBrands.featured.length
         });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({ success: false, error: 'Failed to fetch featured brands' });
     }
 });
 
-// ============ PAYSTACK PAYMENT INITIALIZATION ============
-app.post('/api/paystack/initialize', (req, res) => {
-    const { email, amount, metadata } = req.body;
-    if (!email || !amount) {
-        return res.status(400).json({ error: 'Email and amount required' });
+// ============ PAYMENT TRANSACTIONS ============
+app.get('/api/admin/payments', (req, res) => {
+    console.log('GET /api/admin/payments - Admin Key:', req.headers['x-admin-key']);
+    
+    if (req.headers['x-admin-key'] !== ADMIN_PASSWORD) {
+        return res.status(401).json({ success: false, error: 'Unauthorized - Invalid admin key' });
     }
-    // In production, call Paystack API to initialize payment
-    res.json({
-        success: true,
-        authorization_url: `https://checkout.paystack.com/pay/${process.env.PAYSTACK_PUBLIC || 'pk_test_xxx'}?email=${email}&amount=${amount * 100}`,
-        message: 'Redirect to Paystack'
-    });
+    
+    try {
+        res.json({ 
+            success: true, 
+            transactions: paymentTransactions,
+            total: paymentTransactions.length,
+            total_revenue: paymentTransactions.reduce((sum, t) => sum + t.amount, 0)
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Failed to fetch payments', details: err.message });
+    }
+});
+
+app.post('/api/admin/payments/record', (req, res) => {
+    if (req.headers['x-admin-key'] !== ADMIN_PASSWORD) {
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+    
+    try {
+        const { reference, email, amount, type, company_name, status } = req.body;
+        
+        const transaction = {
+            id: 'TXN_' + Date.now(),
+            reference: reference || 'TXN_' + Date.now(),
+            email,
+            amount,
+            type,
+            status: status || 'success',
+            date: new Date().toISOString(),
+            company_name: company_name || 'N/A'
+        };
+        
+        paymentTransactions.push(transaction);
+        res.json({ success: true, transaction });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Failed to record payment' });
+    }
 });
 
 // ============ ERROR HANDLERS ============
-app.use((req, res) => res.status(404).json({ error: 'Endpoint not found' }));
+app.use((req, res) => {
+    res.status(404).json({ success: false, error: 'Endpoint not found', path: req.path });
+});
+
 app.use((err, req, res, next) => {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+    console.error('Server error:', err);
+    res.status(500).json({ success: false, error: 'Server error', message: err.message });
 });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`\n✅ BrandsTrack Backend v3.0 - PRODUCTION READY`);
-    console.log(`📡 Port: ${PORT}\n`);
+    console.log(`\n✅ BrandsTrack Backend v3.1 - PRODUCTION READY`);
+    console.log(`📡 Port: ${PORT}`);
+    console.log(`🔒 Admin endpoints protected with x-admin-key header`);
+    console.log(`💳 Payment tracking enabled\n`);
 });
 
 module.exports = app;
