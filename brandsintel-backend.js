@@ -1,9 +1,9 @@
-// ============ BRANDSTRACK BACKEND - MATCHED TO ADMIN DASHBOARD (AUGUST 28 2026) ============
+// ============ BRANDSTRACK BACKEND - FIXED FOR NODE.JS 22 (AUGUST 28 2026) ============
 const express = require('express');
 const app = express();
 
+// Only use json middleware - remove urlencoded which is causing the error
 app.use(express.json());
-app.use(express.urlencoding({ extended: true }));
 
 const ADMIN_PASSWORD = 'BrandsIntel2024';
 
@@ -114,7 +114,7 @@ const requireAdmin = (req, res, next) => {
 
 // ============ HEALTH ============
 app.get('/health', (req, res) => {
-    res.json({ status: 'ok', version: '3.3', timestamp: new Date().toISOString() });
+    res.json({ status: 'ok', version: '3.4', timestamp: new Date().toISOString() });
 });
 
 // ============ SETTINGS ============
@@ -164,7 +164,6 @@ app.get('/api/companies/search', (req, res) => {
 
 // ============ PREMIUM BRAND SUBMISSIONS ============
 app.get('/api/admin/premium-brand/pending', requireAdmin, (req, res) => {
-    console.log('✅ GET /api/admin/premium-brand/pending');
     const pending = premiumBrandSubmissions.filter(s => s.status === 'pending');
     res.json({ 
         success: true, 
@@ -173,12 +172,10 @@ app.get('/api/admin/premium-brand/pending', requireAdmin, (req, res) => {
 });
 
 app.post('/api/admin/premium-brand/:submissionId/approve', requireAdmin, (req, res) => {
-    console.log('✅ POST /api/admin/premium-brand/:submissionId/approve');
     const sub = premiumBrandSubmissions.find(s => s.id === req.params.submissionId);
     if (!sub) return res.status(404).json({ success: false, error: 'Submission not found' });
     
     sub.status = 'approved';
-    // Add to featured if not there
     if (!featuredBrands.find(b => b.company_name === sub.company_name)) {
         featuredBrands.push({
             id: 'brand_' + Date.now(),
@@ -193,7 +190,6 @@ app.post('/api/admin/premium-brand/:submissionId/approve', requireAdmin, (req, r
 });
 
 app.post('/api/admin/premium-brand/:submissionId/reject', requireAdmin, (req, res) => {
-    console.log('✅ POST /api/admin/premium-brand/:submissionId/reject');
     const sub = premiumBrandSubmissions.find(s => s.id === req.params.submissionId);
     if (!sub) return res.status(404).json({ success: false, error: 'Submission not found' });
     
@@ -205,7 +201,6 @@ app.post('/api/admin/premium-brand/:submissionId/reject', requireAdmin, (req, re
 
 // ============ FEATURED BRANDS ============
 app.get('/api/admin/premium-brand/active', requireAdmin, (req, res) => {
-    console.log('✅ GET /api/admin/premium-brand/active');
     res.json({ 
         success: true, 
         brands: featuredBrands,
@@ -214,9 +209,7 @@ app.get('/api/admin/premium-brand/active', requireAdmin, (req, res) => {
     });
 });
 
-// Also available without auth for public display
 app.get('/api/premium-brand/active', (req, res) => {
-    console.log('✅ GET /api/premium-brand/active (public)');
     res.json({ 
         success: true, 
         brands: featuredBrands,
@@ -226,7 +219,6 @@ app.get('/api/premium-brand/active', (req, res) => {
 });
 
 app.post('/api/admin/premium-brand/:brandId/unfeature', requireAdmin, (req, res) => {
-    console.log('✅ POST /api/admin/premium-brand/:brandId/unfeature');
     const idx = featuredBrands.findIndex(b => b.id === req.params.brandId);
     if (idx !== -1) {
         featuredBrands.splice(idx, 1);
@@ -235,7 +227,6 @@ app.post('/api/admin/premium-brand/:brandId/unfeature', requireAdmin, (req, res)
 });
 
 app.post('/api/admin/premium-brand/:brandId/feature', requireAdmin, (req, res) => {
-    console.log('✅ POST /api/admin/premium-brand/:brandId/feature');
     if (featuredBrands.length >= 8) {
         return res.status(400).json({ success: false, error: 'Featured slots full' });
     }
@@ -258,7 +249,6 @@ app.post('/api/admin/premium-brand/:brandId/feature', requireAdmin, (req, res) =
 
 // ============ PAYMENTS ============
 app.get('/api/admin/payments', requireAdmin, (req, res) => {
-    console.log('✅ GET /api/admin/payments');
     const successful = paymentTransactions.filter(p => p.status === 'success').length;
     const failed = paymentTransactions.filter(p => p.status === 'failed').length;
     const total = paymentTransactions.reduce((sum, p) => sum + p.amount, 0);
@@ -291,12 +281,10 @@ app.post('/api/admin/payments/record', requireAdmin, (req, res) => {
 
 // ============ COMPANIES ============
 app.get('/api/admin/companies', requireAdmin, (req, res) => {
-    console.log('✅ GET /api/admin/companies');
     res.json({ success: true, companies: mockCompanies });
 });
 
 app.post('/api/admin/companies/:companyId/upgrade', requireAdmin, (req, res) => {
-    console.log('✅ POST /api/admin/companies/:companyId/upgrade');
     const company = mockCompanies.find(c => c.id === req.params.companyId);
     if (!company) return res.status(404).json({ success: false, error: 'Company not found' });
     
@@ -308,7 +296,6 @@ app.post('/api/admin/companies/:companyId/upgrade', requireAdmin, (req, res) => 
 });
 
 app.post('/api/admin/companies/:companyId/downgrade', requireAdmin, (req, res) => {
-    console.log('✅ POST /api/admin/companies/:companyId/downgrade');
     const company = mockCompanies.find(c => c.id === req.params.companyId);
     if (!company) return res.status(404).json({ success: false, error: 'Company not found' });
     
@@ -325,7 +312,7 @@ app.use((req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`\n✅ BrandsTrack Backend v3.3 - MATCHED TO ADMIN DASHBOARD\n🔐 Admin Key: BrandsIntel2024\n📡 Port: ${PORT}\n`);
+    console.log(`\n✅ BrandsTrack Backend v3.4 - RUNNING ON PORT ${PORT}\n`);
 });
 
 module.exports = app;
