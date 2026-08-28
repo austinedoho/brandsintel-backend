@@ -10,7 +10,8 @@ const ADMIN_PASSWORD = 'BrandsIntel2024';
 // ============ DATA STORES ============
 let appData = {
     free_searches_per_day: 3,
-    premium_monthly_price: 30000,
+    premium_monthly_price: 30000,  // Premium User price (individuals)
+    premium_brand_price: 2000,     // Premium Brand price (companies)
     articles_per_company: 5,
     premium_currency: 'NGN'
 };
