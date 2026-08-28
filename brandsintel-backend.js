@@ -1,20 +1,23 @@
-// ============ BRANDSTRACK BACKEND - FIXED FOR NODE.JS 22 (AUGUST 28 2026) ============
+// ============ BRANDSTRACK BACKEND - EDITABLE PRICING (AUGUST 28 2026) ============
 const express = require('express');
 const app = express();
 
-// Only use json middleware - remove urlencoded which is causing the error
 app.use(express.json());
 
 const ADMIN_PASSWORD = 'BrandsIntel2024';
 
-// ============ DATA STORES ============
+// ============ EDITABLE PRICING STORAGE ============
 let appData = {
     free_searches_per_day: 3,
-    premium_monthly_price: 30000,  // Premium User price (individuals)
-    premium_brand_price: 2000,     // Premium Brand price (companies)
+    premium_monthly_price: 30000,      // Premium User: editable
+    premium_brand_price: 2000,         // Premium Brand: editable
     articles_per_company: 5,
     premium_currency: 'NGN'
 };
+
+console.log('💰 Initial Pricing:');
+console.log('   Premium User: ₦' + appData.premium_monthly_price);
+console.log('   Premium Brand: ₦' + appData.premium_brand_price);
 
 const mockCompanies = [
     {
@@ -59,29 +62,16 @@ const mockCompanies = [
     }
 ];
 
-// Premium brand submissions & featured
 let premiumBrandSubmissions = [
     {
-        id: 'sub_001',
-        company_name: 'Konga',
-        cac_number: 'CAC-BN-12345',
-        email: 'contact@konga.com',
-        phone: '+234 800 123 4567',
-        address: '123 Lekki Phase 1, Lagos',
-        certificate_url: 'https://example.com/cert_konga.pdf',
-        status: 'pending',
-        submitted_date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString()
+        id: 'sub_001', company_name: 'Konga', cac_number: 'CAC-BN-12345', email: 'contact@konga.com',
+        phone: '+234 800 123 4567', address: '123 Lekki Phase 1, Lagos', certificate_url: 'https://example.com/cert_konga.pdf',
+        status: 'pending', submitted_date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString()
     },
     {
-        id: 'sub_002',
-        company_name: 'Golden Hospital',
-        cac_number: 'CAC-BN-99999',
-        email: 'info@goldenhospital.com',
-        phone: '+234 803 456 7890',
-        address: '15 Crescent Road, Ikoyi',
-        certificate_url: 'https://example.com/cert_golden.pdf',
-        status: 'pending',
-        submitted_date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
+        id: 'sub_002', company_name: 'Golden Hospital', cac_number: 'CAC-BN-99999', email: 'info@goldenhospital.com',
+        phone: '+234 803 456 7890', address: '15 Crescent Road, Ikoyi', certificate_url: 'https://example.com/cert_golden.pdf',
+        status: 'pending', submitted_date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
     }
 ];
 
@@ -115,27 +105,44 @@ const requireAdmin = (req, res, next) => {
 
 // ============ HEALTH ============
 app.get('/health', (req, res) => {
-    res.json({ status: 'ok', version: '3.4', timestamp: new Date().toISOString() });
+    res.json({ status: 'ok', version: '3.6', timestamp: new Date().toISOString() });
 });
 
-// ============ SETTINGS ============
+// ============ GET SETTINGS (RETURNS CURRENT EDITABLE PRICES) ============
 app.get('/api/admin/settings', requireAdmin, (req, res) => {
+    console.log('📖 GET /api/admin/settings');
     res.json({ success: true, settings: appData });
 });
 
+// ============ UPDATE SETTINGS (ALLOWS EDITING PRICES) ============
 app.post('/api/admin/settings/update', requireAdmin, (req, res) => {
-    const { premium_monthly_price, free_searches_per_day } = req.body;
-    if (premium_monthly_price) appData.premium_monthly_price = premium_monthly_price;
-    if (free_searches_per_day) appData.free_searches_per_day = free_searches_per_day;
-    res.json({ success: true, settings: appData });
+    console.log('✏️ POST /api/admin/settings/update - Body:', req.body);
+    
+    const { premium_monthly_price, premium_brand_price, free_searches_per_day } = req.body;
+    
+    if (premium_monthly_price !== undefined) {
+        appData.premium_monthly_price = parseInt(premium_monthly_price);
+        console.log('💰 Updated Premium User Price to: ₦' + appData.premium_monthly_price);
+    }
+    if (premium_brand_price !== undefined) {
+        appData.premium_brand_price = parseInt(premium_brand_price);
+        console.log('💰 Updated Premium Brand Price to: ₦' + appData.premium_brand_price);
+    }
+    if (free_searches_per_day !== undefined) {
+        appData.free_searches_per_day = parseInt(free_searches_per_day);
+        console.log('🔍 Updated Free Searches to: ' + appData.free_searches_per_day);
+    }
+    
+    res.json({ success: true, message: 'Settings updated successfully', settings: appData });
 });
 
-// ============ PUBLIC SETTINGS ============
+// ============ PUBLIC SETTINGS (RETURNS CURRENT PRICES) ============
 app.get('/api/settings/public', (req, res) => {
     res.json({ 
         success: true, 
         settings: {
             premium_monthly_price: appData.premium_monthly_price,
+            premium_brand_price: appData.premium_brand_price,
             free_searches_per_day: appData.free_searches_per_day,
         }
     });
@@ -163,19 +170,15 @@ app.get('/api/companies/search', (req, res) => {
     });
 });
 
-// ============ PREMIUM BRAND SUBMISSIONS ============
+// ============ PREMIUM BRANDS ============
 app.get('/api/admin/premium-brand/pending', requireAdmin, (req, res) => {
     const pending = premiumBrandSubmissions.filter(s => s.status === 'pending');
-    res.json({ 
-        success: true, 
-        submissions: pending
-    });
+    res.json({ success: true, submissions: pending });
 });
 
 app.post('/api/admin/premium-brand/:submissionId/approve', requireAdmin, (req, res) => {
     const sub = premiumBrandSubmissions.find(s => s.id === req.params.submissionId);
     if (!sub) return res.status(404).json({ success: false, error: 'Submission not found' });
-    
     sub.status = 'approved';
     if (!featuredBrands.find(b => b.company_name === sub.company_name)) {
         featuredBrands.push({
@@ -186,54 +189,36 @@ app.post('/api/admin/premium-brand/:submissionId/approve', requireAdmin, (req, r
             phone: sub.phone
         });
     }
-    
     res.json({ success: true, message: 'Premium brand approved', submission: sub });
 });
 
 app.post('/api/admin/premium-brand/:submissionId/reject', requireAdmin, (req, res) => {
     const sub = premiumBrandSubmissions.find(s => s.id === req.params.submissionId);
     if (!sub) return res.status(404).json({ success: false, error: 'Submission not found' });
-    
     sub.status = 'rejected';
     sub.rejection_reason = req.body.reason || 'No reason provided';
-    
     res.json({ success: true, message: 'Premium brand rejected', submission: sub });
 });
 
 // ============ FEATURED BRANDS ============
 app.get('/api/admin/premium-brand/active', requireAdmin, (req, res) => {
-    res.json({ 
-        success: true, 
-        brands: featuredBrands,
-        total_slots: 8,
-        used_slots: featuredBrands.length
-    });
+    res.json({ success: true, brands: featuredBrands, total_slots: 8, used_slots: featuredBrands.length });
 });
 
 app.get('/api/premium-brand/active', (req, res) => {
-    res.json({ 
-        success: true, 
-        brands: featuredBrands,
-        total_slots: 8,
-        used_slots: featuredBrands.length
-    });
+    res.json({ success: true, brands: featuredBrands, total_slots: 8, used_slots: featuredBrands.length });
 });
 
 app.post('/api/admin/premium-brand/:brandId/unfeature', requireAdmin, (req, res) => {
     const idx = featuredBrands.findIndex(b => b.id === req.params.brandId);
-    if (idx !== -1) {
-        featuredBrands.splice(idx, 1);
-    }
+    if (idx !== -1) featuredBrands.splice(idx, 1);
     res.json({ success: true, brands: featuredBrands });
 });
 
 app.post('/api/admin/premium-brand/:brandId/feature', requireAdmin, (req, res) => {
-    if (featuredBrands.length >= 8) {
-        return res.status(400).json({ success: false, error: 'Featured slots full' });
-    }
+    if (featuredBrands.length >= 8) return res.status(400).json({ success: false, error: 'Featured slots full' });
     const brand = mockCompanies.find(c => c.id === req.params.brandId);
     if (!brand) return res.status(404).json({ success: false, error: 'Brand not found' });
-    
     if (!featuredBrands.find(b => b.id === brand.id)) {
         featuredBrands.push({
             id: brand.id,
@@ -244,7 +229,6 @@ app.post('/api/admin/premium-brand/:brandId/feature', requireAdmin, (req, res) =
             phone: brand.phone
         });
     }
-    
     res.json({ success: true, brands: featuredBrands });
 });
 
@@ -253,14 +237,9 @@ app.get('/api/admin/payments', requireAdmin, (req, res) => {
     const successful = paymentTransactions.filter(p => p.status === 'success').length;
     const failed = paymentTransactions.filter(p => p.status === 'failed').length;
     const total = paymentTransactions.reduce((sum, p) => sum + p.amount, 0);
-    
     res.json({
         success: true,
-        stats: {
-            total_revenue: total,
-            successful_payments: successful,
-            failed_payments: failed
-        },
+        stats: { total_revenue: total, successful_payments: successful, failed_payments: failed },
         payments: paymentTransactions
     });
 });
@@ -288,32 +267,28 @@ app.get('/api/admin/companies', requireAdmin, (req, res) => {
 app.post('/api/admin/companies/:companyId/upgrade', requireAdmin, (req, res) => {
     const company = mockCompanies.find(c => c.id === req.params.companyId);
     if (!company) return res.status(404).json({ success: false, error: 'Company not found' });
-    
     company.is_premium = true;
     const months = req.body.subscription_months || 1;
     company.subscription_end_date = new Date(Date.now() + months * 30 * 24 * 60 * 60 * 1000).toISOString();
-    
     res.json({ success: true, company });
 });
 
 app.post('/api/admin/companies/:companyId/downgrade', requireAdmin, (req, res) => {
     const company = mockCompanies.find(c => c.id === req.params.companyId);
     if (!company) return res.status(404).json({ success: false, error: 'Company not found' });
-    
     company.is_premium = false;
     company.subscription_end_date = null;
-    
     res.json({ success: true, company });
 });
 
-// ============ ERROR HANDLING ============
+// ============ ERROR ============
 app.use((req, res) => {
     res.status(404).json({ success: false, error: 'Endpoint not found', path: req.path });
 });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`\n✅ BrandsTrack Backend v3.4 - RUNNING ON PORT ${PORT}\n`);
+    console.log(`\n✅ BrandsTrack Backend v3.6 - EDITABLE PRICING\n🔧 Prices can be edited via admin dashboard\n📡 Port: ${PORT}\n`);
 });
 
 module.exports = app;
