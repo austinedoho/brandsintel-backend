@@ -458,10 +458,9 @@ app.post('/api/v1/disputes/report', validateApiKey, async (req, res) => {
 // Endpoint: Subscribe to B2B SaaS plan
 app.post('/api/v1/saas/subscribe', async (req, res) => {
   try {
-    const { plan, email, amount } = req.body;
-
-    if (!plan || !email || !amount) {
-      return res.status(400).json({ error: 'plan, email, and amount required' });
+    const { plan, email, organization_name, amount } = req.body;
+    if (!plan || !email || !organization_name || !amount) {
+      return res.status(400).json({ error: 'plan, email, organization_name, and amount required' });
     }
 
     // Validate plan
