@@ -82,9 +82,11 @@ app.get('/health', async (req, res) => {
 
 // Endpoint: Generate PDF Trust Report
 app.post('/api/v1/reports/generate', async (req, res) => {
-    const { plan, email, organization_name, amount } = req.body;
-    if (!plan || !email || !organization_name || !amount) {
-      return res.status(400).json({ error: 'plan, email, organization_name, and amount required' });
+  try {
+    const { rc_number, email } = req.body;
+
+    if (!rc_number || !email) {
+      return res.status(400).json({ error: 'rc_number and email required' });
     }
 
     // 1. Get company from cache
@@ -458,26 +460,28 @@ app.post('/api/v1/disputes/report', validateApiKey, async (req, res) => {
 app.post('/api/v1/saas/subscribe', async (req, res) => {
   try {
     const { plan, email, organization_name, amount } = req.body;
+
     if (!plan || !email || !organization_name || !amount) {
       return res.status(400).json({ error: 'plan, email, organization_name, and amount required' });
     }
 
-    // Validate plan
+    // Validate plan (case-insensitive)
+    const planLower = plan.toLowerCase();
     const validPlans = {
       'starter': 35000,
       'growth': 85000
     };
 
-    if (!validPlans[plan] || validPlans[plan] !== amount) {
-      return res.status(400).json({ error: 'Invalid plan or amount' });
+    if (!validPlans[planLower] || validPlans[planLower] !== amount) {
+      return res.status(400).json({ error: `Invalid plan "${plan}" or amount. Starter: ₦35000, Growth: ₦85000` });
     }
 
     // Create subscription record
     const subscriptionResult = await pgPool.query(
-      `INSERT INTO saas_subscriptions (email, plan, amount_naira, status, created_at)
-       VALUES ($1, $2, $3, $4, NOW())
+      `INSERT INTO saas_subscriptions (organization_name, email, plan, amount_naira, status, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
        RETURNING id, plan, amount_naira`,
-      [email, plan, amount, 'pending']
+      [organization_name, email, planLower, amount, 'pending']
     );
 
     const subscription = subscriptionResult.rows[0];
@@ -490,7 +494,8 @@ app.post('/api/v1/saas/subscribe', async (req, res) => {
         amount: amount * 100, // Convert to kobo
         metadata: {
           subscription_id: subscription.id,
-          plan: plan,
+          organization_name: organization_name,
+          plan: planLower,
           type: 'b2b_subscription'
         }
       },
@@ -504,7 +509,8 @@ app.post('/api/v1/saas/subscribe', async (req, res) => {
     res.json({
       success: true,
       subscription_id: subscription.id,
-      plan: plan,
+      organization_name: organization_name,
+      plan: planLower,
       amount_naira: amount,
       payment: {
         amount_kobo: amount * 100,
