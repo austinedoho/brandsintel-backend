@@ -81,12 +81,11 @@ app.get('/health', async (req, res) => {
 // ============================================================================
 
 // Endpoint: Generate PDF Trust Report
-app.post('/api/v1/reports/generate', async (req, res) => {
+app.post('/api/v1/saas/subscribe', async (req, res) => {
   try {
-    const { rc_number, email } = req.body;
-
-    if (!rc_number || !email) {
-      return res.status(400).json({ error: 'rc_number and email required' });
+    const { plan, email, organization_name, amount } = req.body;
+    if (!plan || !email || !organization_name || !amount) {
+      return res.status(400).json({ error: 'plan, email, organization_name, and amount required' });
     }
 
     // 1. Get company from cache
