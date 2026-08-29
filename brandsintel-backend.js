@@ -557,9 +557,9 @@ app.use((req, res, next) => {
       const duration = endTime - req.usage.startTime;
       
       pgPool.query(
-        `INSERT INTO api_usage (api_key, endpoint, status_code, response_time_ms, called_at)
-         VALUES ($1, $2, $3, $4, NOW())`,
-        [req.usage.apiKey, req.usage.endpoint, res.statusCode, duration]
+        `INSERT INTO api_usage (api_key, endpoint, status_code, called_at)
+         VALUES ($1, $2, $3, NOW())`,
+        [req.usage.apiKey, req.usage.endpoint, res.statusCode]
       ).catch(err => console.error('Usage tracking failed:', err.message));
     }
     
@@ -602,8 +602,14 @@ app.post('/api/v1/enterprise/kyb-plus', validateApiKey, async (req, res) => {
 
     const score = scoreResult.rows[0] || { overall_score: 75, risk_level: 'medium' };
 
-    // Get directors
-    let directors = JSON.parse(company.directors || '[]');
+    // Get directors - already stored as JSON string
+    let directors = [];
+    try {
+      directors = JSON.parse(company.directors || '[]');
+    } catch (e) {
+      directors = company.directors || [];
+    }
+    
     let sisterEntities = [];
 
     if (include_graph && neo4jConnected) {
@@ -737,7 +743,7 @@ app.post('/api/v1/enterprise/monitor/subscribe', validateApiKey, async (req, res
       `INSERT INTO monitoring_registry (monitoring_id, rc_numbers, webhook_url, events, status, created_at)
        VALUES ($1, $2, $3, $4, $5, NOW())
        RETURNING monitoring_id`,
-      [monitoringId, rc_numbers, webhook_url, selectedEvents, 'active']
+      [monitoringId, JSON.stringify(rc_numbers), webhook_url, JSON.stringify(selectedEvents), 'active']
     );
 
     res.json({
@@ -766,8 +772,7 @@ app.get('/api/v1/enterprise/billing', validateApiKey, async (req, res) => {
     const usageResult = await pgPool.query(
       `SELECT 
         COUNT(*) as total_calls,
-        SUM(CASE WHEN endpoint LIKE '%enterprise%' THEN 1 ELSE 0 END) as enterprise_calls,
-        AVG(response_time_ms) as avg_response_time
+        SUM(CASE WHEN endpoint LIKE '%enterprise%' THEN 1 ELSE 0 END) as enterprise_calls
        FROM api_usage 
        WHERE api_key = $1 
        AND called_at >= NOW() - INTERVAL '30 days'`,
@@ -797,9 +802,8 @@ app.get('/api/v1/enterprise/billing', validateApiKey, async (req, res) => {
       success: true,
       api_key: apiKey.slice(0, 10) + '...',
       period: 'Last 30 days',
-      total_api_calls: usage.total_calls || 0,
-      enterprise_api_calls: usage.enterprise_calls || 0,
-      avg_response_time_ms: Math.round(usage.avg_response_time || 0),
+      total_api_calls: parseInt(usage.total_calls) || 0,
+      enterprise_api_calls: parseInt(usage.enterprise_calls) || 0,
       pricing: {
         per_call: 225,
         minimum_monthly: 50000
@@ -858,7 +862,7 @@ app.get('/api/v1/enterprise/monitor/status', validateApiKey, async (req, res) =>
       success: true,
       monitoring_id: monitoring_id,
       status: monitoring.status,
-      companies_monitored: monitoring.rc_numbers.length,
+      companies_monitored: Array.isArray(monitoring.rc_numbers) ? monitoring.rc_numbers.length : JSON.parse(monitoring.rc_numbers).length,
       webhook_url: monitoring.webhook_url,
       events_subscribed: monitoring.events,
       delivery_stats: {
