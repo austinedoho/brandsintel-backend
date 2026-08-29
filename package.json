@@ -1,38 +1,31 @@
 {
   "name": "brandsintel-backend",
-  "version": "2.0.0",
-  "description": "BrandsIntel - AI-powered business trust verification engine for Nigeria",
+  "version": "5.0.0",
+  "description": "BrandsTrack v5.0 - Enterprise Fraud Intelligence Platform",
   "main": "brandsintel-backend.js",
   "scripts": {
     "start": "node brandsintel-backend.js",
-    "dev": "nodemon brandsintel-backend.js"
-  },
-  "keywords": [
-    "verification",
-    "trust",
-    "fraud",
-    "nigeria",
-    "business",
-    "paystack",
-    "premium"
-  ],
-  "author": "BrandsIntel",
-  "license": "MIT",
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.9.0",
-    "@supabase/supabase-js": "^2.38.0",
-    "axios": "^1.6.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "multer": "^2.2.0",
-    "newsapi": "latest",
-    "twilio": "^6.1.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.2"
+    "dev": "node brandsintel-backend.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "engines": {
-    "node": "22"
+    "node": "22.x"
+  },
+  "keywords": [
+    "fraud-detection",
+    "kyb",
+    "business-verification"
+  ],
+  "author": "BrandsTrack Team",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "dotenv": "^16.3.1",
+    "axios": "^1.6.5",
+    "node-cron": "^3.0.2",
+    "pg": "^8.11.3",
+    "neo4j-driver": "^5.14.0"
   }
 }
