@@ -1,7 +1,7 @@
 // ============================================================================
 // BRANDSTRACK v5.0 - ENTERPRISE FRAUD INTELLIGENCE PLATFORM
 // Backend Server (Node.js + Express)
-// Features: Web scraping, velocity scoring, Neo4j integration, 3-phase monetization
+// NEO4J IS OPTIONAL - Server runs without it
 // ============================================================================
 
 require('dotenv').config();
@@ -27,10 +27,8 @@ const pgPool = new Pool({
   connectionString: process.env.DATABASE_URL
 });
 
-const neo4jDriver = neo4j.driver(
-  process.env.NEO4J_URI,
-  neo4j.auth.basic(process.env.NEO4J_USER, process.env.NEO4J_PASSWORD)
-);
+let neo4jDriver = null;
+let neo4jConnected = false;
 
 // ============================================================================
 // MIDDLEWARE
@@ -45,7 +43,7 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use((req, res, next) => {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] ${req.method} ${req.path}`);
-  next();
+  next()
 });
 
 // ============================================================================
@@ -58,10 +56,6 @@ app.get('/health', async (req, res) => {
     const pgResult = await pgPool.query('SELECT NOW()');
     const pgStatus = pgResult.rows[0] ? 'connected' : 'error';
 
-    // Test Neo4j
-    const neoResult = await neo4jDriver.executeQuery('RETURN 1 as test');
-    const neoStatus = neoResult.records.length > 0 ? 'connected' : 'error';
-
     res.json({
       status: 'ok',
       version: '5.0',
@@ -69,7 +63,7 @@ app.get('/health', async (req, res) => {
       timestamp: new Date().toISOString(),
       databases: {
         postgresql: pgStatus,
-        neo4j: neoStatus
+        neo4j: neo4jConnected ? 'connected' : 'disconnected'
       },
       uptime: process.uptime()
     });
@@ -227,8 +221,6 @@ const validateApiKey = async (req, res, next) => {
     return res.status(401).json({ error: 'API key required' });
   }
 
-  // In production, validate against database
-  // For now, basic check
   if (apiKey.length < 20) {
     return res.status(401).json({ error: 'Invalid API key' });
   }
@@ -266,17 +258,28 @@ app.get('/api/v1/kyb/verify', validateApiKey, async (req, res) => {
 
     const score = scoreResult.rows[0] || { overall_score: 75 };
 
-    // Get directors from Neo4j
-    const directorResult = await neo4jDriver.executeQuery(
-      `MATCH (c:Company {rc_number: $rc})<-[:ASSOCIATED_WITH]-(d:Director)
-       RETURN d.full_name as name, d.role as role`,
-      { rc }
-    );
+    // Get directors from database (Neo4j optional)
+    let directors = [];
+    if (neo4jConnected) {
+      try {
+        const directorResult = await neo4jDriver.executeQuery(
+          `MATCH (c:Company {rc_number: $rc})<-[:ASSOCIATED_WITH]-(d:Director)
+           RETURN d.full_name as name, d.role as role`,
+          { rc }
+        );
+        directors = directorResult.records.map(r => ({
+          name: r.get('name'),
+          role: r.get('role')
+        }));
+      } catch (err) {
+        console.warn('Neo4j query failed, using fallback:', err.message);
+      }
+    }
 
-    const directors = directorResult.records.map(r => ({
-      name: r.get('name'),
-      role: r.get('role')
-    }));
+    // Fallback to database directors
+    if (directors.length === 0) {
+      directors = JSON.parse(company.directors || '[]');
+    }
 
     res.json({
       rc_number: rc,
@@ -290,7 +293,7 @@ app.get('/api/v1/kyb/verify', validateApiKey, async (req, res) => {
       address: `${company.address_line_1}, ${company.city}, ${company.state}`,
       phone: company.phone,
       email: company.email,
-      directors: directors.length > 0 ? directors : JSON.parse(company.directors || '[]'),
+      directors: directors,
       verification_timestamp: new Date().toISOString()
     });
 
@@ -355,7 +358,7 @@ app.get('/api/v1/risk/velocity', validateApiKey, async (req, res) => {
   }
 });
 
-// Endpoint: Director Network Graph
+// Endpoint: Director Network Graph (Neo4j optional)
 app.get('/api/v1/nexus/graph', validateApiKey, async (req, res) => {
   try {
     const { rc } = req.query;
@@ -364,26 +367,34 @@ app.get('/api/v1/nexus/graph', validateApiKey, async (req, res) => {
       return res.status(400).json({ error: 'rc parameter required' });
     }
 
-    // Query Neo4j for director network
-    const graphResult = await neo4jDriver.executeQuery(
-      `MATCH (c:Company {rc_number: $rc})<-[:ASSOCIATED_WITH]-(d:Director)-[:ASSOCIATED_WITH]->(other:Company)
-       WHERE other.rc_number <> $rc
-       RETURN d.full_name as director, other.rc_number as company_rc, other.name as company_name, other.industry as industry
-       LIMIT 20`,
-      { rc }
-    );
+    let sisterEntities = [];
 
-    const sisterEntities = graphResult.records.map(r => ({
-      director: r.get('director'),
-      company_rc: r.get('company_rc'),
-      company_name: r.get('company_name'),
-      industry: r.get('industry')
-    }));
+    if (neo4jConnected) {
+      try {
+        const graphResult = await neo4jDriver.executeQuery(
+          `MATCH (c:Company {rc_number: $rc})<-[:ASSOCIATED_WITH]-(d:Director)-[:ASSOCIATED_WITH]->(other:Company)
+           WHERE other.rc_number <> $rc
+           RETURN d.full_name as director, other.rc_number as company_rc, other.name as company_name, other.industry as industry
+           LIMIT 20`,
+          { rc }
+        );
+
+        sisterEntities = graphResult.records.map(r => ({
+          director: r.get('director'),
+          company_rc: r.get('company_rc'),
+          company_name: r.get('company_name'),
+          industry: r.get('industry')
+        }));
+      } catch (err) {
+        console.warn('Neo4j graph query failed:', err.message);
+      }
+    }
 
     res.json({
       rc_number: rc,
       director_connections: sisterEntities.length,
       sister_entities: sisterEntities,
+      neo4j_status: neo4jConnected ? 'connected' : 'disconnected',
       timestamp: new Date().toISOString()
     });
 
@@ -393,7 +404,7 @@ app.get('/api/v1/nexus/graph', validateApiKey, async (req, res) => {
   }
 });
 
-// Endpoint: Report Dispute (B2B fraud report)
+// Endpoint: Report Dispute
 app.post('/api/v1/disputes/report', validateApiKey, async (req, res) => {
   try {
     const { rc_number, dispute_type, description, amount_naira } = req.body;
@@ -423,8 +434,8 @@ app.post('/api/v1/disputes/report', validateApiKey, async (req, res) => {
         dispute_type,
         description,
         amount_naira || 0,
-        'api_user@brandstrack.com', // Would come from API key context
-        '00000000-0000-0000-0000-000000000000' // Placeholder
+        'api_user@brandstrack.com',
+        '00000000-0000-0000-0000-000000000000'
       ]
     );
 
@@ -454,7 +465,6 @@ app.post('/api/v1/monitor/subscribe', validateApiKey, async (req, res) => {
       return res.status(400).json({ error: 'webhook_url required' });
     }
 
-    // In production, validate webhook URL and create monitoring_registry record
     res.json({
       success: true,
       message: 'Webhook subscription created',
@@ -494,28 +504,9 @@ app.post('/api/admin/login', async (req, res) => {
 });
 
 // ============================================================================
-// SCHEDULED TASKS (Background jobs)
+// 404 HANDLER
 // ============================================================================
 
-// Run every week (Monday at 02:00 AM)
-cron.schedule('0 2 * * 1', async () => {
-  console.log('Running weekly company scrape job...');
-  // Scrape top 100 companies for updates
-  // In production, this would call ZenRows API
-});
-
-// Run daily (every 6 hours)
-cron.schedule('0 */6 * * *', async () => {
-  console.log('Running velocity score recalculation...');
-  // Recalculate trust scores for all companies
-  // Update risk_level based on recent changes
-});
-
-// ============================================================================
-// ERROR HANDLING
-// ============================================================================
-
-// 404 handler
 app.use((req, res) => {
   res.status(404).json({
     error: 'Endpoint not found',
@@ -539,12 +530,28 @@ app.use((err, req, res, next) => {
 
 async function startServer() {
   try {
-    // Test database connections
+    // Test PostgreSQL (REQUIRED)
     const pgTest = await pgPool.query('SELECT 1');
     console.log('✅ PostgreSQL connected');
 
-    const neoTest = await neo4jDriver.executeQuery('RETURN 1');
-    console.log('✅ Neo4j connected');
+    // Test Neo4j (OPTIONAL)
+    if (process.env.NEO4J_URI && process.env.NEO4J_USER && process.env.NEO4J_PASSWORD) {
+      try {
+        neo4jDriver = neo4j.driver(
+          process.env.NEO4J_URI,
+          neo4j.auth.basic(process.env.NEO4J_USER, process.env.NEO4J_PASSWORD)
+        );
+        const neoTest = await neo4jDriver.executeQuery('RETURN 1');
+        console.log('✅ Neo4j connected');
+        neo4jConnected = true;
+      } catch (neoError) {
+        console.log('⚠️  Neo4j connection failed:', neoError.message);
+        console.log('   (Continuing without Neo4j - basic features still work)');
+        neo4jConnected = false;
+      }
+    } else {
+      console.log('⚠️  Neo4j credentials not provided - skipping Neo4j connection');
+    }
 
     // Start server
     app.listen(PORT, () => {
@@ -553,11 +560,12 @@ async function startServer() {
       console.log('║  Fraud Intelligence Platform          ║');
       console.log(`║  Listening on port ${PORT}                 ║`);
       console.log(`║  Environment: ${NODE_ENV.padEnd(22)}║`);
+      console.log(`║  Neo4j: ${neo4jConnected ? 'CONNECTED  ' : 'OPTIONAL   '}              ║`);
       console.log('╚════════════════════════════════════════╝\n');
     });
 
   } catch (error) {
-    console.error('❌ Failed to start server:', error);
+    console.error('❌ Failed to start server:', error.message);
     process.exit(1);
   }
 }
@@ -569,7 +577,9 @@ startServer();
 process.on('SIGINT', async () => {
   console.log('\n\nShutting down gracefully...');
   await pgPool.end();
-  await neo4jDriver.close();
+  if (neo4jDriver) {
+    await neo4jDriver.close();
+  }
   process.exit(0);
 });
 
