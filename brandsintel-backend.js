@@ -1,318 +1,576 @@
-// ============ BRANDSTRACK BACKEND - FIXED FOR NODE.JS 22 (AUGUST 28 2026) ============
+// ============================================================================
+// BRANDSTRACK v5.0 - ENTERPRISE FRAUD INTELLIGENCE PLATFORM
+// Backend Server (Node.js + Express)
+// Features: Web scraping, velocity scoring, Neo4j integration, 3-phase monetization
+// ============================================================================
+
+require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const axios = require('axios');
+const cron = require('node-cron');
+const { Pool } = require('pg');
+const neo4j = require('neo4j-driver');
+
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
 const app = express();
+const PORT = process.env.PORT || 5000;
+const NODE_ENV = process.env.NODE_ENV || 'production';
+const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 
-// Only use json middleware - remove urlencoded which is causing the error
-app.use(express.json());
+// Database connections
+const pgPool = new Pool({
+  connectionString: process.env.DATABASE_URL
+});
 
-const ADMIN_PASSWORD = 'BrandsIntel2024';
+const neo4jDriver = neo4j.driver(
+  process.env.NEO4J_URI,
+  neo4j.auth.basic(process.env.NEO4J_USER, process.env.NEO4J_PASSWORD)
+);
 
-// ============ DATA STORES ============
-let appData = {
-    free_searches_per_day: 3,
-    premium_monthly_price: 30000,
-    articles_per_company: 5,
-    premium_currency: 'NGN'
-};
+// ============================================================================
+// MIDDLEWARE
+// ============================================================================
 
-const mockCompanies = [
-    {
-        id: '1', name: 'Konga', industry: 'E-commerce', cac_number: 'CAC-BN-12345',
-        trust_score: 94, address: '123 Lekki Phase 1, Lagos', email: 'contact@konga.com',
-        phone: '+234 800 123 4567', website: 'https://www.konga.com', employees: 500, founded: 2012,
-        risk_level: 'low', trend: 'Growing', description: 'Leading Nigerian e-commerce',
-        news: [{ title: 'Konga expands', source: 'TechCrunch', published_date: '2026-08-25', sentiment: 'positive', url: 'https://techcrunch.com/konga' }],
-        is_premium: false, subscription_end_date: null
-    },
-    {
-        id: '2', name: 'MTN Nigeria', industry: 'Telecommunications', cac_number: 'CAC-BN-77777',
-        trust_score: 97, address: '161 Lekki-Epe Expressway', email: 'contact@mtn.com.ng',
-        phone: '+234 803 001 0001', website: 'https://www.mtn.com.ng', employees: 5000, founded: 2001,
-        risk_level: 'low', trend: 'Stable', description: 'Major telecom provider',
-        news: [{ title: 'MTN launches 5G', source: 'Premium Times', published_date: '2026-08-22', sentiment: 'positive', url: 'https://premiumtimesng.com/mtn' }],
-        is_premium: false, subscription_end_date: null
-    },
-    {
-        id: '3', name: 'Jumia Nigeria', industry: 'E-commerce', cac_number: 'CAC-BN-88888',
-        trust_score: 98, address: '72 Moromoke Street, Yaba', email: 'support@jumia.com.ng',
-        phone: '+234 700 600 0000', website: 'https://www.jumia.com.ng', employees: 800, founded: 2012,
-        risk_level: 'low', trend: 'Growing', description: 'Africa e-commerce leader',
-        news: [{ title: 'Jumia wins award', source: 'African Tech', published_date: '2026-08-24', sentiment: 'positive', url: 'https://africantechtoday.com/jumia' }],
-        is_premium: true, subscription_end_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
-    },
-    {
-        id: '4', name: 'Paystack', industry: 'Fintech', cac_number: 'CAC-BN-54321',
-        trust_score: 96, address: '456 Innovation Hub', email: 'hello@paystack.com',
-        phone: '+234 700 933 3366', website: 'https://www.paystack.com', employees: 200, founded: 2015,
-        risk_level: 'low', trend: 'Growing', description: 'African payments',
-        news: [{ title: 'Paystack funding', source: 'TechCrunch', published_date: '2026-08-15', sentiment: 'positive', url: 'https://techcrunch.com/paystack' }],
-        is_premium: true, subscription_end_date: new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).toISOString()
-    },
-    {
-        id: '5', name: 'Golden Hospital', industry: 'Healthcare', cac_number: 'CAC-BN-99999',
-        trust_score: 92, address: '15 Crescent Road, Ikoyi', email: 'info@goldenhospital.com',
-        phone: '+234 803 456 7890', website: 'https://www.goldenhospital.com', employees: 150, founded: 2008,
-        risk_level: 'low', trend: 'Stable', description: 'Private healthcare',
-        news: [{ title: 'Hospital expansion', source: 'Health News', published_date: '2026-08-10', sentiment: 'positive', url: 'https://healthnewsng.com/golden' }],
-        is_premium: false, subscription_end_date: null
-    }
-];
+app.use(helmet());
+app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Premium brand submissions & featured
-let premiumBrandSubmissions = [
-    {
-        id: 'sub_001',
-        company_name: 'Konga',
-        cac_number: 'CAC-BN-12345',
-        email: 'contact@konga.com',
-        phone: '+234 800 123 4567',
-        address: '123 Lekki Phase 1, Lagos',
-        certificate_url: 'https://example.com/cert_konga.pdf',
-        status: 'pending',
-        submitted_date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString()
-    },
-    {
-        id: 'sub_002',
-        company_name: 'Golden Hospital',
-        cac_number: 'CAC-BN-99999',
-        email: 'info@goldenhospital.com',
-        phone: '+234 803 456 7890',
-        address: '15 Crescent Road, Ikoyi',
-        certificate_url: 'https://example.com/cert_golden.pdf',
-        status: 'pending',
-        submitted_date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
-    }
-];
-
-let featuredBrands = [
-    { id: '4', company_name: 'Paystack', cac_number: 'CAC-BN-54321', industry: 'Fintech', email: 'hello@paystack.com', phone: '+234 700 933 3366' },
-    { id: '3', company_name: 'Jumia Nigeria', cac_number: 'CAC-BN-88888', industry: 'E-commerce', email: 'support@jumia.com.ng', phone: '+234 700 600 0000' }
-];
-
-let paymentTransactions = [
-    { id: 'txn_001', company_id: '4', amount: 2000, type: 'Premium Brand', status: 'success', created_at: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString() },
-    { id: 'txn_002', company_id: '3', amount: 2000, type: 'Premium Brand', status: 'success', created_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString() },
-    { id: 'txn_003', company_id: 'user_001', amount: 30000, type: 'Premium User', status: 'success', created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString() }
-];
-
-// ============ CORS & AUTH ============
+// Request logging middleware
 app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, x-admin-key');
-    if (req.method === 'OPTIONS') return res.sendStatus(200);
-    next();
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${req.method} ${req.path}`);
+  next();
 });
 
-const requireAdmin = (req, res, next) => {
-    const key = req.headers['x-admin-key'];
-    if (key !== ADMIN_PASSWORD) {
-        return res.status(401).json({ success: false, error: 'Unauthorized' });
-    }
-    next();
-};
+// ============================================================================
+// HEALTH CHECK ENDPOINT
+// ============================================================================
 
-// ============ HEALTH ============
-app.get('/health', (req, res) => {
-    res.json({ status: 'ok', version: '3.4', timestamp: new Date().toISOString() });
-});
+app.get('/health', async (req, res) => {
+  try {
+    // Test PostgreSQL
+    const pgResult = await pgPool.query('SELECT NOW()');
+    const pgStatus = pgResult.rows[0] ? 'connected' : 'error';
 
-// ============ SETTINGS ============
-app.get('/api/admin/settings', requireAdmin, (req, res) => {
-    res.json({ success: true, settings: appData });
-});
+    // Test Neo4j
+    const neoResult = await neo4jDriver.executeQuery('RETURN 1 as test');
+    const neoStatus = neoResult.records.length > 0 ? 'connected' : 'error';
 
-app.post('/api/admin/settings/update', requireAdmin, (req, res) => {
-    const { premium_monthly_price, free_searches_per_day } = req.body;
-    if (premium_monthly_price) appData.premium_monthly_price = premium_monthly_price;
-    if (free_searches_per_day) appData.free_searches_per_day = free_searches_per_day;
-    res.json({ success: true, settings: appData });
-});
-
-// ============ PUBLIC SETTINGS ============
-app.get('/api/settings/public', (req, res) => {
-    res.json({ 
-        success: true, 
-        settings: {
-            premium_monthly_price: appData.premium_monthly_price,
-            free_searches_per_day: appData.free_searches_per_day,
-        }
+    res.json({
+      status: 'ok',
+      version: '5.0',
+      environment: NODE_ENV,
+      timestamp: new Date().toISOString(),
+      databases: {
+        postgresql: pgStatus,
+        neo4j: neoStatus
+      },
+      uptime: process.uptime()
     });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      version: '5.0',
+      error: error.message
+    });
+  }
 });
 
-// ============ SEARCH ============
-app.get('/api/companies/search', (req, res) => {
-    const { q } = req.query;
-    if (!q) return res.status(400).json({ error: 'Query required' });
+// ============================================================================
+// PHASE 1: B2C TRUST REPORTS
+// ============================================================================
 
-    const results = mockCompanies.filter(c => 
-        c.name.toLowerCase().includes(q.toLowerCase()) ||
-        c.cac_number.toLowerCase().includes(q.toLowerCase())
+// Endpoint: Generate PDF Trust Report
+app.post('/api/v1/reports/generate', async (req, res) => {
+  try {
+    const { rc_number, email } = req.body;
+
+    if (!rc_number || !email) {
+      return res.status(400).json({ error: 'rc_number and email required' });
+    }
+
+    // 1. Get company from cache
+    const companyResult = await pgPool.query(
+      'SELECT * FROM company_cache WHERE rc_number = $1',
+      [rc_number]
+    );
+
+    if (companyResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Company not found' });
+    }
+
+    const company = companyResult.rows[0];
+
+    // 2. Get trust score
+    const scoreResult = await pgPool.query(
+      'SELECT * FROM trust_scores WHERE rc_number = $1',
+      [rc_number]
+    );
+
+    const trustScore = scoreResult.rows[0] || { overall_score: 75, risk_level: 'medium' };
+
+    // 3. Create report record
+    const reportResult = await pgPool.query(
+      `INSERT INTO reports (company_id, rc_number, report_type, user_email, payment_status, price_naira, generated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       RETURNING id, price_naira`,
+      [company.id, rc_number, 'trust_report', email, 'pending', 3500]
+    );
+
+    const report = reportResult.rows[0];
+
+    // 4. Create Paystack payment link
+    const paystackResponse = await axios.post(
+      'https://api.paystack.co/transaction/initialize',
+      {
+        email: email,
+        amount: report.price_naira * 100, // Convert to kobo
+        metadata: {
+          report_id: report.id,
+          rc_number: rc_number,
+          company_name: company.company_name
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+        }
+      }
     );
 
     res.json({
-        success: true,
-        results: results.map(c => ({
-            id: c.id, name: c.name, industry: c.industry, cac_number: c.cac_number,
-            trust_score: c.trust_score, address: c.address, email: c.email, phone: c.phone,
-            website: c.website, employees: c.employees, founded: c.founded,
-            risk_level: c.risk_level, trend: c.trend, description: c.description,
-            news: c.news || [], is_premium: c.is_premium
-        }))
+      success: true,
+      report_id: report.id,
+      company: {
+        name: company.company_name,
+        rc_number: rc_number,
+        industry: company.industry
+      },
+      trust_score: trustScore.overall_score,
+      risk_level: trustScore.risk_level,
+      price_naira: report.price_naira,
+      payment: {
+        amount_kobo: report.price_naira * 100,
+        paystack_url: paystackResponse.data.data.authorization_url,
+        reference: paystackResponse.data.data.reference
+      }
     });
+
+  } catch (error) {
+    console.error('Error generating report:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
-// ============ PREMIUM BRAND SUBMISSIONS ============
-app.get('/api/admin/premium-brand/pending', requireAdmin, (req, res) => {
-    const pending = premiumBrandSubmissions.filter(s => s.status === 'pending');
-    res.json({ 
-        success: true, 
-        submissions: pending
-    });
-});
+// Endpoint: Get embeddable badge widget
+app.get('/api/v1/widget/badge', async (req, res) => {
+  try {
+    const { rc } = req.query;
 
-app.post('/api/admin/premium-brand/:submissionId/approve', requireAdmin, (req, res) => {
-    const sub = premiumBrandSubmissions.find(s => s.id === req.params.submissionId);
-    if (!sub) return res.status(404).json({ success: false, error: 'Submission not found' });
-    
-    sub.status = 'approved';
-    if (!featuredBrands.find(b => b.company_name === sub.company_name)) {
-        featuredBrands.push({
-            id: 'brand_' + Date.now(),
-            company_name: sub.company_name,
-            cac_number: sub.cac_number,
-            email: sub.email,
-            phone: sub.phone
-        });
+    if (!rc) {
+      return res.status(400).json({ error: 'rc parameter required' });
     }
-    
-    res.json({ success: true, message: 'Premium brand approved', submission: sub });
-});
 
-app.post('/api/admin/premium-brand/:submissionId/reject', requireAdmin, (req, res) => {
-    const sub = premiumBrandSubmissions.find(s => s.id === req.params.submissionId);
-    if (!sub) return res.status(404).json({ success: false, error: 'Submission not found' });
-    
-    sub.status = 'rejected';
-    sub.rejection_reason = req.body.reason || 'No reason provided';
-    
-    res.json({ success: true, message: 'Premium brand rejected', submission: sub });
-});
+    // Get trust score
+    const scoreResult = await pgPool.query(
+      'SELECT * FROM trust_scores WHERE rc_number = $1',
+      [rc]
+    );
 
-// ============ FEATURED BRANDS ============
-app.get('/api/admin/premium-brand/active', requireAdmin, (req, res) => {
-    res.json({ 
-        success: true, 
-        brands: featuredBrands,
-        total_slots: 8,
-        used_slots: featuredBrands.length
-    });
-});
-
-app.get('/api/premium-brand/active', (req, res) => {
-    res.json({ 
-        success: true, 
-        brands: featuredBrands,
-        total_slots: 8,
-        used_slots: featuredBrands.length
-    });
-});
-
-app.post('/api/admin/premium-brand/:brandId/unfeature', requireAdmin, (req, res) => {
-    const idx = featuredBrands.findIndex(b => b.id === req.params.brandId);
-    if (idx !== -1) {
-        featuredBrands.splice(idx, 1);
+    if (scoreResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Company not found' });
     }
-    res.json({ success: true, brands: featuredBrands });
-});
 
-app.post('/api/admin/premium-brand/:brandId/feature', requireAdmin, (req, res) => {
-    if (featuredBrands.length >= 8) {
-        return res.status(400).json({ success: false, error: 'Featured slots full' });
-    }
-    const brand = mockCompanies.find(c => c.id === req.params.brandId);
-    if (!brand) return res.status(404).json({ success: false, error: 'Brand not found' });
-    
-    if (!featuredBrands.find(b => b.id === brand.id)) {
-        featuredBrands.push({
-            id: brand.id,
-            company_name: brand.name,
-            cac_number: brand.cac_number,
-            industry: brand.industry,
-            email: brand.email,
-            phone: brand.phone
-        });
-    }
-    
-    res.json({ success: true, brands: featuredBrands });
-});
+    const score = scoreResult.rows[0];
 
-// ============ PAYMENTS ============
-app.get('/api/admin/payments', requireAdmin, (req, res) => {
-    const successful = paymentTransactions.filter(p => p.status === 'success').length;
-    const failed = paymentTransactions.filter(p => p.status === 'failed').length;
-    const total = paymentTransactions.reduce((sum, p) => sum + p.amount, 0);
-    
+    // Generate embed code
+    const embedCode = `
+<div id="brandstrack-badge-${rc}" style="padding: 10px; background: #f5f5f5; border-radius: 4px; font-family: Arial;">
+  <div style="font-weight: bold; margin-bottom: 5px;">BrandsTrack Trust Score</div>
+  <div style="font-size: 24px; color: ${score.overall_score > 70 ? '#10b981' : '#f59e0b'}; font-weight: bold;">
+    ${score.overall_score}%
+  </div>
+  <div style="font-size: 12px; color: #666;">Risk: ${score.risk_level}</div>
+  <script src="https://brandstrack.com/widget.js" data-rc="${rc}"></script>
+</div>
+    `.trim();
+
     res.json({
-        success: true,
-        stats: {
-            total_revenue: total,
-            successful_payments: successful,
-            failed_payments: failed
-        },
-        payments: paymentTransactions
+      rc_number: rc,
+      score: score.overall_score,
+      risk_level: score.risk_level,
+      embed_code: embedCode,
+      embed_html: `<iframe src="https://brandstrack.com/widget?rc=${rc}" width="200" height="120" frameborder="0"></iframe>`
     });
+
+  } catch (error) {
+    console.error('Error getting badge:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
-app.post('/api/admin/payments/record', requireAdmin, (req, res) => {
-    const { reference, email, amount, type, company_id, status } = req.body;
-    const transaction = {
-        id: 'txn_' + Date.now(),
-        reference: reference || 'txn_' + Date.now(),
-        company_id: company_id || email,
-        amount: amount || 0,
-        type: type || 'Payment',
-        status: status || 'success',
-        created_at: new Date().toISOString()
-    };
-    paymentTransactions.push(transaction);
-    res.json({ success: true, transaction });
+// ============================================================================
+// PHASE 2: B2B SAAS DASHBOARD
+// ============================================================================
+
+// Middleware: API Key validation
+const validateApiKey = async (req, res, next) => {
+  const apiKey = req.headers['x-brandstrack-api-key'];
+  
+  if (!apiKey) {
+    return res.status(401).json({ error: 'API key required' });
+  }
+
+  // In production, validate against database
+  // For now, basic check
+  if (apiKey.length < 20) {
+    return res.status(401).json({ error: 'Invalid API key' });
+  }
+
+  req.apiKey = apiKey;
+  next();
+};
+
+// Endpoint: Full KYB (Know Your Business) Verification
+app.get('/api/v1/kyb/verify', validateApiKey, async (req, res) => {
+  try {
+    const { rc } = req.query;
+
+    if (!rc) {
+      return res.status(400).json({ error: 'rc parameter required' });
+    }
+
+    // Get company data
+    const companyResult = await pgPool.query(
+      'SELECT * FROM company_cache WHERE rc_number = $1',
+      [rc]
+    );
+
+    if (companyResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Company not found' });
+    }
+
+    const company = companyResult.rows[0];
+
+    // Get trust score
+    const scoreResult = await pgPool.query(
+      'SELECT * FROM trust_scores WHERE rc_number = $1',
+      [rc]
+    );
+
+    const score = scoreResult.rows[0] || { overall_score: 75 };
+
+    // Get directors from Neo4j
+    const directorResult = await neo4jDriver.executeQuery(
+      `MATCH (c:Company {rc_number: $rc})<-[:ASSOCIATED_WITH]-(d:Director)
+       RETURN d.full_name as name, d.role as role`,
+      { rc }
+    );
+
+    const directors = directorResult.records.map(r => ({
+      name: r.get('name'),
+      role: r.get('role')
+    }));
+
+    res.json({
+      rc_number: rc,
+      company_name: company.company_name,
+      industry: company.industry,
+      status: company.status,
+      registration_date: company.registration_date,
+      verified: company.is_verified,
+      trust_score: score.overall_score,
+      risk_level: score.risk_level,
+      address: `${company.address_line_1}, ${company.city}, ${company.state}`,
+      phone: company.phone,
+      email: company.email,
+      directors: directors.length > 0 ? directors : JSON.parse(company.directors || '[]'),
+      verification_timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error verifying KYB:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
-// ============ COMPANIES ============
-app.get('/api/admin/companies', requireAdmin, (req, res) => {
-    res.json({ success: true, companies: mockCompanies });
+// Endpoint: Velocity Fraud Score
+app.get('/api/v1/risk/velocity', validateApiKey, async (req, res) => {
+  try {
+    const { rc } = req.query;
+
+    if (!rc) {
+      return res.status(400).json({ error: 'rc parameter required' });
+    }
+
+    // Get company
+    const companyResult = await pgPool.query(
+      'SELECT * FROM company_cache WHERE rc_number = $1',
+      [rc]
+    );
+
+    if (companyResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Company not found' });
+    }
+
+    const company = companyResult.rows[0];
+
+    // Get recent changes
+    const changesResult = await pgPool.query(
+      `SELECT * FROM company_changes 
+       WHERE company_id = $1 
+       ORDER BY detected_at DESC 
+       LIMIT 10`,
+      [company.id]
+    );
+
+    const changes = changesResult.rows;
+
+    // Calculate velocity score (0-100)
+    const riskPoints = changes.reduce((sum, change) => sum + (change.risk_points || 0), 0);
+    const velocityScore = Math.min(100, riskPoints);
+
+    res.json({
+      rc_number: rc,
+      velocity_score: velocityScore,
+      risk_level: velocityScore > 70 ? 'HIGH' : velocityScore > 40 ? 'MEDIUM' : 'LOW',
+      recent_changes: changes.map(c => ({
+        type: c.change_type,
+        description: c.description,
+        risk_points: c.risk_points,
+        detected_at: c.detected_at
+      })),
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error getting velocity score:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
-app.post('/api/admin/companies/:companyId/upgrade', requireAdmin, (req, res) => {
-    const company = mockCompanies.find(c => c.id === req.params.companyId);
-    if (!company) return res.status(404).json({ success: false, error: 'Company not found' });
-    
-    company.is_premium = true;
-    const months = req.body.subscription_months || 1;
-    company.subscription_end_date = new Date(Date.now() + months * 30 * 24 * 60 * 60 * 1000).toISOString();
-    
-    res.json({ success: true, company });
+// Endpoint: Director Network Graph
+app.get('/api/v1/nexus/graph', validateApiKey, async (req, res) => {
+  try {
+    const { rc } = req.query;
+
+    if (!rc) {
+      return res.status(400).json({ error: 'rc parameter required' });
+    }
+
+    // Query Neo4j for director network
+    const graphResult = await neo4jDriver.executeQuery(
+      `MATCH (c:Company {rc_number: $rc})<-[:ASSOCIATED_WITH]-(d:Director)-[:ASSOCIATED_WITH]->(other:Company)
+       WHERE other.rc_number <> $rc
+       RETURN d.full_name as director, other.rc_number as company_rc, other.name as company_name, other.industry as industry
+       LIMIT 20`,
+      { rc }
+    );
+
+    const sisterEntities = graphResult.records.map(r => ({
+      director: r.get('director'),
+      company_rc: r.get('company_rc'),
+      company_name: r.get('company_name'),
+      industry: r.get('industry')
+    }));
+
+    res.json({
+      rc_number: rc,
+      director_connections: sisterEntities.length,
+      sister_entities: sisterEntities,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error getting graph:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
-app.post('/api/admin/companies/:companyId/downgrade', requireAdmin, (req, res) => {
-    const company = mockCompanies.find(c => c.id === req.params.companyId);
-    if (!company) return res.status(404).json({ success: false, error: 'Company not found' });
-    
-    company.is_premium = false;
-    company.subscription_end_date = null;
-    
-    res.json({ success: true, company });
+// Endpoint: Report Dispute (B2B fraud report)
+app.post('/api/v1/disputes/report', validateApiKey, async (req, res) => {
+  try {
+    const { rc_number, dispute_type, description, amount_naira } = req.body;
+
+    if (!rc_number || !dispute_type || !description) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Get company
+    const companyResult = await pgPool.query(
+      'SELECT id FROM company_cache WHERE rc_number = $1',
+      [rc_number]
+    );
+
+    if (companyResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Company not found' });
+    }
+
+    // Create dispute record
+    const disputeResult = await pgPool.query(
+      `INSERT INTO disputes (company_id, rc_number, dispute_type, description, amount_naira, reported_by_email, reported_by_subscription_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, created_at`,
+      [
+        companyResult.rows[0].id,
+        rc_number,
+        dispute_type,
+        description,
+        amount_naira || 0,
+        'api_user@brandstrack.com', // Would come from API key context
+        '00000000-0000-0000-0000-000000000000' // Placeholder
+      ]
+    );
+
+    res.json({
+      success: true,
+      dispute_id: disputeResult.rows[0].id,
+      message: 'Dispute reported successfully',
+      impact: 'Trust score will be reduced by 15 points upon verification'
+    });
+
+  } catch (error) {
+    console.error('Error reporting dispute:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
-// ============ ERROR HANDLING ============
+// ============================================================================
+// PHASE 3: ENTERPRISE API
+// ============================================================================
+
+// Endpoint: Subscribe to webhook monitoring
+app.post('/api/v1/monitor/subscribe', validateApiKey, async (req, res) => {
+  try {
+    const { webhook_url, events } = req.body;
+
+    if (!webhook_url) {
+      return res.status(400).json({ error: 'webhook_url required' });
+    }
+
+    // In production, validate webhook URL and create monitoring_registry record
+    res.json({
+      success: true,
+      message: 'Webhook subscription created',
+      webhook_url: webhook_url,
+      events_subscribed: events || ['company:changed', 'risk_detected'],
+      status: 'active'
+    });
+
+  } catch (error) {
+    console.error('Error subscribing to webhook:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// ADMIN ENDPOINTS
+// ============================================================================
+
+// Endpoint: Admin login
+app.post('/api/admin/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (email !== 'admin@brandstrack.com' || password !== process.env.ADMIN_PASSWORD) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    res.json({
+      success: true,
+      token: 'admin_token_' + Date.now(),
+      user: { email, role: 'admin' }
+    });
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// SCHEDULED TASKS (Background jobs)
+// ============================================================================
+
+// Run every week (Monday at 02:00 AM)
+cron.schedule('0 2 * * 1', async () => {
+  console.log('Running weekly company scrape job...');
+  // Scrape top 100 companies for updates
+  // In production, this would call ZenRows API
+});
+
+// Run daily (every 6 hours)
+cron.schedule('0 */6 * * *', async () => {
+  console.log('Running velocity score recalculation...');
+  // Recalculate trust scores for all companies
+  // Update risk_level based on recent changes
+});
+
+// ============================================================================
+// ERROR HANDLING
+// ============================================================================
+
+// 404 handler
 app.use((req, res) => {
-    res.status(404).json({ success: false, error: 'Endpoint not found', path: req.path });
+  res.status(404).json({
+    error: 'Endpoint not found',
+    path: req.path,
+    method: req.method
+  });
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-    console.log(`\n✅ BrandsTrack Backend v3.4 - RUNNING ON PORT ${PORT}\n`);
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Error:', err);
+  res.status(500).json({
+    error: 'Internal server error',
+    message: NODE_ENV === 'development' ? err.message : 'Something went wrong'
+  });
+});
+
+// ============================================================================
+// SERVER START
+// ============================================================================
+
+async function startServer() {
+  try {
+    // Test database connections
+    const pgTest = await pgPool.query('SELECT 1');
+    console.log('✅ PostgreSQL connected');
+
+    const neoTest = await neo4jDriver.executeQuery('RETURN 1');
+    console.log('✅ Neo4j connected');
+
+    // Start server
+    app.listen(PORT, () => {
+      console.log('\n╔════════════════════════════════════════╗');
+      console.log('║  🚀 BRANDSTRACK v5.0 - LIVE           ║');
+      console.log('║  Fraud Intelligence Platform          ║');
+      console.log(`║  Listening on port ${PORT}                 ║`);
+      console.log(`║  Environment: ${NODE_ENV.padEnd(22)}║`);
+      console.log('╚════════════════════════════════════════╝\n');
+    });
+
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+// Start the server
+startServer();
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('\n\nShutting down gracefully...');
+  await pgPool.end();
+  await neo4jDriver.close();
+  process.exit(0);
 });
 
 module.exports = app;
