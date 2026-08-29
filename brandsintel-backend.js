@@ -453,6 +453,76 @@ app.post('/api/v1/disputes/report', validateApiKey, async (req, res) => {
 });
 
 // ============================================================================
+// PHASE 2.5: B2B SAAS SUBSCRIPTIONS
+// ============================================================================
+
+// Endpoint: Subscribe to B2B SaaS plan
+app.post('/api/v1/saas/subscribe', async (req, res) => {
+  try {
+    const { plan, email, amount } = req.body;
+
+    if (!plan || !email || !amount) {
+      return res.status(400).json({ error: 'plan, email, and amount required' });
+    }
+
+    // Validate plan
+    const validPlans = {
+      'starter': 35000,
+      'growth': 85000
+    };
+
+    if (!validPlans[plan] || validPlans[plan] !== amount) {
+      return res.status(400).json({ error: 'Invalid plan or amount' });
+    }
+
+    // Create subscription record
+    const subscriptionResult = await pgPool.query(
+      `INSERT INTO saas_subscriptions (email, plan, amount_naira, status, created_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       RETURNING id, plan, amount_naira`,
+      [email, plan, amount, 'pending']
+    );
+
+    const subscription = subscriptionResult.rows[0];
+
+    // Create Paystack payment link
+    const paystackResponse = await axios.post(
+      'https://api.paystack.co/transaction/initialize',
+      {
+        email: email,
+        amount: amount * 100, // Convert to kobo
+        metadata: {
+          subscription_id: subscription.id,
+          plan: plan,
+          type: 'b2b_subscription'
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+        }
+      }
+    );
+
+    res.json({
+      success: true,
+      subscription_id: subscription.id,
+      plan: plan,
+      amount_naira: amount,
+      payment: {
+        amount_kobo: amount * 100,
+        paystack_url: paystackResponse.data.data.authorization_url,
+        reference: paystackResponse.data.data.reference
+      }
+    });
+
+  } catch (error) {
+    console.error('Error creating subscription:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
 // PHASE 3: ENTERPRISE API
 // ============================================================================
 
