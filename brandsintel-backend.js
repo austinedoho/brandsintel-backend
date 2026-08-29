@@ -476,12 +476,12 @@ app.post('/api/v1/saas/subscribe', async (req, res) => {
       return res.status(400).json({ error: `Invalid plan "${plan}" or amount. Starter: ₦35000, Growth: ₦85000` });
     }
 
-    // Create subscription record
+    // Create subscription record with correct column names
     const subscriptionResult = await pgPool.query(
-      `INSERT INTO saas_subscriptions (organization_name, email, plan, amount_naira, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
-       RETURNING id, plan, amount_naira`,
-      [organization_name, email, planLower, amount, 'pending']
+      `INSERT INTO saas_subscriptions (organization_name, organization_email, organization_phone, plan_type, plan_price_naira)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, plan_type, plan_price_naira`,
+      [organization_name, email, '', planLower, amount]
     );
 
     const subscription = subscriptionResult.rows[0];
@@ -495,7 +495,7 @@ app.post('/api/v1/saas/subscribe', async (req, res) => {
         metadata: {
           subscription_id: subscription.id,
           organization_name: organization_name,
-          plan: planLower,
+          plan_type: planLower,
           type: 'b2b_subscription'
         }
       },
@@ -510,8 +510,9 @@ app.post('/api/v1/saas/subscribe', async (req, res) => {
       success: true,
       subscription_id: subscription.id,
       organization_name: organization_name,
-      plan: planLower,
-      amount_naira: amount,
+      organization_email: email,
+      plan_type: planLower,
+      plan_price_naira: amount,
       payment: {
         amount_kobo: amount * 100,
         paystack_url: paystackResponse.data.data.authorization_url,
