@@ -530,14 +530,13 @@ app.post('/api/v1/saas/subscribe', async (req, res) => {
 // PHASE 3: ENTERPRISE API - WEBHOOK MONITORING & USAGE-BASED BILLING
 // ============================================================================
 
-// Middleware: Usage tracking
+// Middleware: Usage tracking (optional - currently disabled due to schema)
 const trackUsage = async (req, res, next) => {
   const apiKey = req.headers['x-brandstrack-api-key'];
-  const endpoint = req.path;
   
   req.usage = {
     apiKey,
-    endpoint,
+    endpoint: req.path,
     startTime: Date.now()
   };
   
@@ -546,26 +545,9 @@ const trackUsage = async (req, res, next) => {
 
 app.use(trackUsage);
 
-// Log usage after response
+// Log usage after response (disabled - api_usage table schema incomplete)
 app.use((req, res, next) => {
-  const originalSend = res.send;
-  
-  res.send = function(data) {
-    // Record usage in database (async, don't block response)
-    if (req.usage && req.usage.apiKey) {
-      const endTime = Date.now();
-      const duration = endTime - req.usage.startTime;
-      
-      pgPool.query(
-        `INSERT INTO api_usage (api_key, endpoint, status_code, called_at)
-         VALUES ($1, $2, $3, NOW())`,
-        [req.usage.apiKey, req.usage.endpoint, res.statusCode]
-      ).catch(err => console.error('Usage tracking failed:', err.message));
-    }
-    
-    return originalSend.call(this, data);
-  };
-  
+  // Usage tracking disabled for now
   next();
 });
 
