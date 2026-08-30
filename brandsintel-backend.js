@@ -1,994 +1,909 @@
 // ============================================================================
-// BRANDSTRACK v5.0 - ENTERPRISE FRAUD INTELLIGENCE PLATFORM
-// Backend Server (Node.js + Express)
-// NEO4J IS OPTIONAL - Server runs without it
+// BRANDSTRACK v5.0 BACKEND - COMPLETE WITH AUTHENTICATION
 // ============================================================================
 
 require('dotenv').config();
 const express = require('express');
+const { Pool } = require('pg');
+const axios = require('axios');
 const cors = require('cors');
 const helmet = require('helmet');
-const axios = require('axios');
-const cron = require('node-cron');
-const { Pool } = require('pg');
-const neo4j = require('neo4j-driver');
-
-// ============================================================================
-// CONFIGURATION
-// ============================================================================
+const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const NODE_ENV = process.env.NODE_ENV || 'production';
-const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
-
-// Database connections
-const pgPool = new Pool({
-  connectionString: process.env.DATABASE_URL
-});
-
-let neo4jDriver = null;
-let neo4jConnected = false;
 
 // ============================================================================
-// MIDDLEWARE
+// SECURITY & MIDDLEWARE
 // ============================================================================
 
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use(express.json());
 
-// Request logging middleware
-app.use((req, res, next) => {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] ${req.method} ${req.path}`);
-  next()
+// Auth config
+const JWT_SECRET = process.env.JWT_SECRET || 'brandstrack-secret-key-change-in-production';
+const JWT_EXPIRY = '7d';
+
+// ============================================================================
+// DATABASE CONNECTION
+// ============================================================================
+
+const pgPool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false
+    }
+});
+
+pgPool.on('error', (err) => {
+    console.error('Unexpected error on idle client', err);
 });
 
 // ============================================================================
-// HEALTH CHECK ENDPOINT
+// UTILITY FUNCTIONS
+// ============================================================================
+
+// Hash password
+function hashPassword(password) {
+    return crypto.createHash('sha256').update(password).digest('hex');
+}
+
+// Generate API key
+function generateAPIKey() {
+    return 'sk_' + crypto.randomBytes(32).toString('hex');
+}
+
+// ============================================================================
+// AUTHENTICATION MIDDLEWARE
+// ============================================================================
+
+function verifyAuth(req, res, next) {
+    try {
+        const token = req.headers.authorization?.replace('Bearer ', '');
+
+        if (!token) {
+            return res.status(401).json({ 
+                error: 'No token provided' 
+            });
+        }
+
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.user = decoded;
+        next();
+
+    } catch (error) {
+        res.status(401).json({ 
+            error: 'Invalid or expired token' 
+        });
+    }
+}
+
+// ============================================================================
+// HEALTH CHECK
 // ============================================================================
 
 app.get('/health', async (req, res) => {
-  try {
-    // Test PostgreSQL
-    const pgResult = await pgPool.query('SELECT NOW()');
-    const pgStatus = pgResult.rows[0] ? 'connected' : 'error';
-
-    res.json({
-      status: 'ok',
-      version: '5.0',
-      environment: NODE_ENV,
-      timestamp: new Date().toISOString(),
-      databases: {
-        postgresql: pgStatus,
-        neo4j: neo4jConnected ? 'connected' : 'disconnected'
-      },
-      uptime: process.uptime()
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'error',
-      version: '5.0',
-      error: error.message
-    });
-  }
+    try {
+        const result = await pgPool.query('SELECT NOW()');
+        res.json({
+            status: 'ok',
+            version: '5.0',
+            environment: process.env.NODE_ENV || 'production',
+            databases: {
+                postgresql: 'connected'
+            },
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            error: error.message
+        });
+    }
 });
 
 // ============================================================================
-// PHASE 1: B2C TRUST REPORTS
+// PHASE 1: TRUST REPORTS (B2C)
 // ============================================================================
 
-// Endpoint: Generate PDF Trust Report
-app.post('/api/v1/reports/generate', async (req, res) => {
-  try {
-    const { rc_number, email } = req.body;
-
-    if (!rc_number || !email) {
-      return res.status(400).json({ error: 'rc_number and email required' });
-    }
-
-    // 1. Get company from cache
-    const companyResult = await pgPool.query(
-      'SELECT * FROM company_cache WHERE rc_number = $1',
-      [rc_number]
-    );
-
-    if (companyResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Company not found' });
-    }
-
-    const company = companyResult.rows[0];
-
-    // 2. Get trust score
-    const scoreResult = await pgPool.query(
-      'SELECT * FROM trust_scores WHERE rc_number = $1',
-      [rc_number]
-    );
-
-    const trustScore = scoreResult.rows[0] || { overall_score: 75, risk_level: 'medium' };
-
-    // 3. Create report record
-    const reportResult = await pgPool.query(
-      `INSERT INTO reports (company_id, rc_number, report_type, user_email, payment_status, price_naira, generated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW())
-       RETURNING id, price_naira`,
-      [company.id, rc_number, 'trust_report', email, 'pending', 3500]
-    );
-
-    const report = reportResult.rows[0];
-
-    // 4. Create Paystack payment link
-    const paystackResponse = await axios.post(
-      'https://api.paystack.co/transaction/initialize',
-      {
-        email: email,
-        amount: report.price_naira * 100, // Convert to kobo
-        metadata: {
-          report_id: report.id,
-          rc_number: rc_number,
-          company_name: company.company_name
-        }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
-        }
-      }
-    );
-
-    res.json({
-      success: true,
-      report_id: report.id,
-      company: {
-        name: company.company_name,
-        rc_number: rc_number,
-        industry: company.industry
-      },
-      trust_score: trustScore.overall_score,
-      risk_level: trustScore.risk_level,
-      price_naira: report.price_naira,
-      payment: {
-        amount_kobo: report.price_naira * 100,
-        paystack_url: paystackResponse.data.data.authorization_url,
-        reference: paystackResponse.data.data.reference
-      }
-    });
-
-  } catch (error) {
-    console.error('Error generating report:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Endpoint: Get embeddable badge widget
+// Widget Badge Endpoint
 app.get('/api/v1/widget/badge', async (req, res) => {
-  try {
-    const { rc } = req.query;
+    try {
+        const { rc } = req.query;
 
-    if (!rc) {
-      return res.status(400).json({ error: 'rc parameter required' });
+        if (!rc) {
+            return res.status(400).json({ error: 'RC number required' });
+        }
+
+        const result = await pgPool.query(
+            'SELECT * FROM company_cache WHERE rc_number = $1',
+            [rc]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Company not found' });
+        }
+
+        const company = result.rows[0];
+
+        const scoreResult = await pgPool.query(
+            'SELECT * FROM trust_scores WHERE rc_number = $1',
+            [rc]
+        );
+
+        const score = scoreResult.rows[0] || { overall_score: 75, risk_level: 'medium' };
+
+        res.json({
+            rc_number: company.rc_number,
+            company_name: company.company_name,
+            score: score.overall_score,
+            risk_level: score.risk_level,
+            industry: company.industry,
+            status: company.status
+        });
+
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: error.message });
     }
+});
 
-    // Get trust score
-    const scoreResult = await pgPool.query(
-      'SELECT * FROM trust_scores WHERE rc_number = $1',
-      [rc]
-    );
+// Generate Report Endpoint (Paystack Payment)
+app.post('/api/v1/reports/generate', async (req, res) => {
+    try {
+        const { rc_number, email, organization_name, amount, plan } = req.body;
 
-    if (scoreResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Company not found' });
+        if (!rc_number || !email) {
+            return res.status(400).json({ error: 'RC number and email required' });
+        }
+
+        // Get company
+        const companyResult = await pgPool.query(
+            'SELECT * FROM company_cache WHERE rc_number = $1',
+            [rc_number]
+        );
+
+        if (companyResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Company not found' });
+        }
+
+        const company = companyResult.rows[0];
+
+        // Get trust score
+        const scoreResult = await pgPool.query(
+            'SELECT * FROM trust_scores WHERE rc_number = $1',
+            [rc_number]
+        );
+
+        const score = scoreResult.rows[0] || { overall_score: 75, risk_level: 'medium' };
+
+        // Initialize Paystack payment
+        const paystackAmount = (amount || 3500) * 100; // Convert to kobo
+
+        const paystackResponse = await axios.post(
+            'https://api.paystack.co/transaction/initialize',
+            {
+                email: email,
+                amount: paystackAmount,
+                metadata: {
+                    rc_number: rc_number,
+                    company_name: company.company_name,
+                    report_type: plan || 'basic',
+                    organization_name: organization_name
+                }
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+                }
+            }
+        );
+
+        res.json({
+            success: true,
+            company: {
+                rc_number: company.rc_number,
+                company_name: company.company_name,
+                trust_score: score.overall_score,
+                risk_level: score.risk_level
+            },
+            payment: {
+                reference: paystackResponse.data.data.reference,
+                paystack_url: paystackResponse.data.data.authorization_url,
+                amount_kobo: paystackAmount,
+                amount_naira: amount || 3500
+            }
+        });
+
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: error.message });
     }
-
-    const score = scoreResult.rows[0];
-
-    // Generate embed code
-    const embedCode = `
-<div id="brandstrack-badge-${rc}" style="padding: 10px; background: #f5f5f5; border-radius: 4px; font-family: Arial;">
-  <div style="font-weight: bold; margin-bottom: 5px;">BrandsTrack Trust Score</div>
-  <div style="font-size: 24px; color: ${score.overall_score > 70 ? '#10b981' : '#f59e0b'}; font-weight: bold;">
-    ${score.overall_score}%
-  </div>
-  <div style="font-size: 12px; color: #666;">Risk: ${score.risk_level}</div>
-  <script src="https://brandstrack.com/widget.js" data-rc="${rc}"></script>
-</div>
-    `.trim();
-
-    res.json({
-      rc_number: rc,
-      score: score.overall_score,
-      risk_level: score.risk_level,
-      embed_code: embedCode,
-      embed_html: `<iframe src="https://brandstrack.com/widget?rc=${rc}" width="200" height="120" frameborder="0"></iframe>`
-    });
-
-  } catch (error) {
-    console.error('Error getting badge:', error);
-    res.status(500).json({ error: error.message });
-  }
 });
 
 // ============================================================================
 // PHASE 2: B2B SAAS DASHBOARD
 // ============================================================================
 
-// Middleware: API Key validation
-const validateApiKey = async (req, res, next) => {
-  const apiKey = req.headers['x-brandstrack-api-key'];
-  
-  if (!apiKey) {
-    return res.status(401).json({ error: 'API key required' });
-  }
-
-  if (apiKey.length < 20) {
-    return res.status(401).json({ error: 'Invalid API key' });
-  }
-
-  req.apiKey = apiKey;
-  next();
-};
-
-// Endpoint: Full KYB (Know Your Business) Verification
-app.get('/api/v1/kyb/verify', validateApiKey, async (req, res) => {
-  try {
-    const { rc } = req.query;
-
-    if (!rc) {
-      return res.status(400).json({ error: 'rc parameter required' });
-    }
-
-    // Get company data
-    const companyResult = await pgPool.query(
-      'SELECT * FROM company_cache WHERE rc_number = $1',
-      [rc]
-    );
-
-    if (companyResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Company not found' });
-    }
-
-    const company = companyResult.rows[0];
-
-    // Get trust score
-    const scoreResult = await pgPool.query(
-      'SELECT * FROM trust_scores WHERE rc_number = $1',
-      [rc]
-    );
-
-    const score = scoreResult.rows[0] || { overall_score: 75 };
-
-    // Get directors from database (Neo4j optional)
-    let directors = [];
-    if (neo4jConnected) {
-      try {
-        const directorResult = await neo4jDriver.executeQuery(
-          `MATCH (c:Company {rc_number: $rc})<-[:ASSOCIATED_WITH]-(d:Director)
-           RETURN d.full_name as name, d.role as role`,
-          { rc }
-        );
-        directors = directorResult.records.map(r => ({
-          name: r.get('name'),
-          role: r.get('role')
-        }));
-      } catch (err) {
-        console.warn('Neo4j query failed, using fallback:', err.message);
-      }
-    }
-
-    // Fallback to database directors
-    if (directors.length === 0) {
-      directors = JSON.parse(company.directors || '[]');
-    }
-
-    res.json({
-      rc_number: rc,
-      company_name: company.company_name,
-      industry: company.industry,
-      status: company.status,
-      registration_date: company.registration_date,
-      verified: company.is_verified,
-      trust_score: score.overall_score,
-      risk_level: score.risk_level,
-      address: `${company.address_line_1}, ${company.city}, ${company.state}`,
-      phone: company.phone,
-      email: company.email,
-      directors: directors,
-      verification_timestamp: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error('Error verifying KYB:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Endpoint: Velocity Fraud Score
-app.get('/api/v1/risk/velocity', validateApiKey, async (req, res) => {
-  try {
-    const { rc } = req.query;
-
-    if (!rc) {
-      return res.status(400).json({ error: 'rc parameter required' });
-    }
-
-    // Get company
-    const companyResult = await pgPool.query(
-      'SELECT * FROM company_cache WHERE rc_number = $1',
-      [rc]
-    );
-
-    if (companyResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Company not found' });
-    }
-
-    const company = companyResult.rows[0];
-
-    // Get recent changes
-    const changesResult = await pgPool.query(
-      `SELECT * FROM company_changes 
-       WHERE company_id = $1 
-       ORDER BY detected_at DESC 
-       LIMIT 10`,
-      [company.id]
-    );
-
-    const changes = changesResult.rows;
-
-    // Calculate velocity score (0-100)
-    const riskPoints = changes.reduce((sum, change) => sum + (change.risk_points || 0), 0);
-    const velocityScore = Math.min(100, riskPoints);
-
-    res.json({
-      rc_number: rc,
-      velocity_score: velocityScore,
-      risk_level: velocityScore > 70 ? 'HIGH' : velocityScore > 40 ? 'MEDIUM' : 'LOW',
-      recent_changes: changes.map(c => ({
-        type: c.change_type,
-        description: c.description,
-        risk_points: c.risk_points,
-        detected_at: c.detected_at
-      })),
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error('Error getting velocity score:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Endpoint: Director Network Graph (Neo4j optional)
-app.get('/api/v1/nexus/graph', validateApiKey, async (req, res) => {
-  try {
-    const { rc } = req.query;
-
-    if (!rc) {
-      return res.status(400).json({ error: 'rc parameter required' });
-    }
-
-    let sisterEntities = [];
-
-    if (neo4jConnected) {
-      try {
-        const graphResult = await neo4jDriver.executeQuery(
-          `MATCH (c:Company {rc_number: $rc})<-[:ASSOCIATED_WITH]-(d:Director)-[:ASSOCIATED_WITH]->(other:Company)
-           WHERE other.rc_number <> $rc
-           RETURN d.full_name as director, other.rc_number as company_rc, other.name as company_name, other.industry as industry
-           LIMIT 20`,
-          { rc }
-        );
-
-        sisterEntities = graphResult.records.map(r => ({
-          director: r.get('director'),
-          company_rc: r.get('company_rc'),
-          company_name: r.get('company_name'),
-          industry: r.get('industry')
-        }));
-      } catch (err) {
-        console.warn('Neo4j graph query failed:', err.message);
-      }
-    }
-
-    res.json({
-      rc_number: rc,
-      director_connections: sisterEntities.length,
-      sister_entities: sisterEntities,
-      neo4j_status: neo4jConnected ? 'connected' : 'disconnected',
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error('Error getting graph:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Endpoint: Report Dispute
-app.post('/api/v1/disputes/report', validateApiKey, async (req, res) => {
-  try {
-    const { rc_number, dispute_type, description, amount_naira } = req.body;
-
-    if (!rc_number || !dispute_type || !description) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    // Get company
-    const companyResult = await pgPool.query(
-      'SELECT id FROM company_cache WHERE rc_number = $1',
-      [rc_number]
-    );
-
-    if (companyResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Company not found' });
-    }
-
-    // Create dispute record
-    const disputeResult = await pgPool.query(
-      `INSERT INTO disputes (company_id, rc_number, dispute_type, description, amount_naira, reported_by_email, reported_by_subscription_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, created_at`,
-      [
-        companyResult.rows[0].id,
-        rc_number,
-        dispute_type,
-        description,
-        amount_naira || 0,
-        'api_user@brandstrack.com',
-        '00000000-0000-0000-0000-000000000000'
-      ]
-    );
-
-    res.json({
-      success: true,
-      dispute_id: disputeResult.rows[0].id,
-      message: 'Dispute reported successfully',
-      impact: 'Trust score will be reduced by 15 points upon verification'
-    });
-
-  } catch (error) {
-    console.error('Error reporting dispute:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ============================================================================
-// PHASE 2.5: B2B SAAS SUBSCRIPTIONS
-// ============================================================================
-
-// Endpoint: Subscribe to B2B SaaS plan
+// Subscribe to SaaS
 app.post('/api/v1/saas/subscribe', async (req, res) => {
-  try {
-    const { plan, email, organization_name, amount } = req.body;
-
-    if (!plan || !email || !organization_name || !amount) {
-      return res.status(400).json({ error: 'plan, email, organization_name, and amount required' });
-    }
-
-    // Validate plan (case-insensitive)
-    const planLower = plan.toLowerCase();
-    const validPlans = {
-      'starter': 35000,
-      'growth': 85000
-    };
-
-    if (!validPlans[planLower] || validPlans[planLower] !== amount) {
-      return res.status(400).json({ error: `Invalid plan "${plan}" or amount. Starter: ₦35000, Growth: ₦85000` });
-    }
-
-    // Create subscription record with correct column names
-    const subscriptionResult = await pgPool.query(
-      `INSERT INTO saas_subscriptions (organization_name, organization_email, organization_phone, plan_type, plan_price_naira)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, plan_type, plan_price_naira`,
-      [organization_name, email, '', planLower, amount]
-    );
-
-    const subscription = subscriptionResult.rows[0];
-
-    // Create Paystack payment link
-    const paystackResponse = await axios.post(
-      'https://api.paystack.co/transaction/initialize',
-      {
-        email: email,
-        amount: amount * 100, // Convert to kobo
-        metadata: {
-          subscription_id: subscription.id,
-          organization_name: organization_name,
-          plan_type: planLower,
-          type: 'b2b_subscription'
-        }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
-        }
-      }
-    );
-
-    res.json({
-      success: true,
-      subscription_id: subscription.id,
-      organization_name: organization_name,
-      organization_email: email,
-      plan_type: planLower,
-      plan_price_naira: amount,
-      payment: {
-        amount_kobo: amount * 100,
-        paystack_url: paystackResponse.data.data.authorization_url,
-        reference: paystackResponse.data.data.reference
-      }
-    });
-
-  } catch (error) {
-    console.error('Error creating subscription:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ============================================================================
-// PHASE 3: ENTERPRISE API - WEBHOOK MONITORING & USAGE-BASED BILLING
-// ============================================================================
-
-// Middleware: Usage tracking (optional - currently disabled due to schema)
-const trackUsage = async (req, res, next) => {
-  const apiKey = req.headers['x-brandstrack-api-key'];
-  
-  req.usage = {
-    apiKey,
-    endpoint: req.path,
-    startTime: Date.now()
-  };
-  
-  next();
-};
-
-app.use(trackUsage);
-
-// Log usage after response (disabled - api_usage table schema incomplete)
-app.use((req, res, next) => {
-  // Usage tracking disabled for now
-  next();
-});
-
-// ============================================================================
-// ENTERPRISE ENDPOINTS (Usage-Based Billing)
-// ============================================================================
-
-// Endpoint: Full KYB with director graph (₦300/call)
-app.post('/api/v1/enterprise/kyb-plus', validateApiKey, async (req, res) => {
-  try {
-    const { rc_number, include_graph, include_disputes } = req.body;
-
-    if (!rc_number) {
-      return res.status(400).json({ error: 'rc_number required' });
-    }
-
-    // Get company
-    const companyResult = await pgPool.query(
-      'SELECT * FROM company_cache WHERE rc_number = $1',
-      [rc_number]
-    );
-
-    if (companyResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Company not found' });
-    }
-
-    const company = companyResult.rows[0];
-
-    // Get trust score
-    const scoreResult = await pgPool.query(
-      'SELECT * FROM trust_scores WHERE rc_number = $1',
-      [rc_number]
-    );
-
-    const score = scoreResult.rows[0] || { overall_score: 75, risk_level: 'medium' };
-
-    // Get directors - already stored as JSON string
-    let directors = [];
     try {
-      directors = JSON.parse(company.directors || '[]');
-    } catch (e) {
-      directors = company.directors || [];
-    }
-    
-    let sisterEntities = [];
+        const { plan, email, organization_name, amount } = req.body;
 
-    if (include_graph && neo4jConnected) {
-      try {
-        const graphResult = await neo4jDriver.executeQuery(
-          `MATCH (c:Company {rc_number: $rc})<-[:ASSOCIATED_WITH]-(d:Director)-[:ASSOCIATED_WITH]->(other:Company)
-           WHERE other.rc_number <> $rc
-           RETURN d.full_name as director, other.rc_number as company_rc, other.name as company_name
-           LIMIT 50`,
-          { rc: rc_number }
+        if (!plan || !email || !organization_name || !amount) {
+            return res.status(400).json({ 
+                error: 'Plan, email, organization_name, and amount required' 
+            });
+        }
+
+        const planLower = plan.toLowerCase();
+        const validPlans = { 'starter': 35000, 'growth': 85000 };
+
+        if (!validPlans[planLower]) {
+            return res.status(400).json({ error: 'Invalid plan' });
+        }
+
+        // Store subscription in database
+        const subResult = await pgPool.query(
+            `INSERT INTO saas_subscriptions (organization_name, organization_email, organization_phone, plan_type, plan_price_naira)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING id, plan_type, plan_price_naira`,
+            [organization_name, email, '', planLower, amount]
         );
 
-        sisterEntities = graphResult.records.map(r => ({
-          director: r.get('director'),
-          related_company_rc: r.get('company_rc'),
-          related_company_name: r.get('company_name')
+        // Initialize Paystack payment
+        const paystackAmount = amount * 100; // Convert to kobo
+
+        const paystackResponse = await axios.post(
+            'https://api.paystack.co/transaction/initialize',
+            {
+                email: email,
+                amount: paystackAmount,
+                metadata: {
+                    subscription_id: subResult.rows[0].id,
+                    organization_name: organization_name,
+                    plan_type: planLower
+                }
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+                }
+            }
+        );
+
+        res.json({
+            success: true,
+            subscription: subResult.rows[0],
+            payment: {
+                reference: paystackResponse.data.data.reference,
+                paystack_url: paystackResponse.data.data.authorization_url,
+                amount_naira: amount
+            }
+        });
+
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================================================
+// PHASE 3: ENTERPRISE API - USAGE-BASED BILLING
+// ============================================================================
+
+// KYB+ Endpoint (₦300/call)
+app.post('/api/v1/enterprise/kyb-plus', async (req, res) => {
+    try {
+        const { rc_number, include_graph, include_disputes } = req.body;
+
+        if (!rc_number) {
+            return res.status(400).json({ error: 'rc_number required' });
+        }
+
+        const companyResult = await pgPool.query(
+            'SELECT * FROM company_cache WHERE rc_number = $1',
+            [rc_number]
+        );
+
+        if (companyResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Company not found' });
+        }
+
+        const company = companyResult.rows[0];
+
+        const scoreResult = await pgPool.query(
+            'SELECT * FROM trust_scores WHERE rc_number = $1',
+            [rc_number]
+        );
+
+        const score = scoreResult.rows[0] || { overall_score: 75, risk_level: 'medium' };
+
+        // Get directors
+        let directors = [];
+        try {
+            directors = JSON.parse(company.directors || '[]');
+        } catch (e) {
+            directors = company.directors || [];
+        }
+
+        let sisterEntities = [];
+
+        // Get disputes if requested
+        let disputes = [];
+        if (include_disputes) {
+            const disputeResult = await pgPool.query(
+                'SELECT * FROM disputes WHERE rc_number = $1 LIMIT 20',
+                [rc_number]
+            );
+            disputes = disputeResult.rows;
+        }
+
+        res.json({
+            success: true,
+            rc_number: rc_number,
+            company_name: company.company_name,
+            industry: company.industry,
+            status: company.status,
+            registration_date: company.registration_date,
+            trust_score: score.overall_score,
+            risk_level: score.risk_level,
+            directors: directors,
+            sister_entities: sisterEntities,
+            disputes: disputes,
+            timestamp: new Date().toISOString(),
+            cost_naira: 300
+        });
+
+    } catch (error) {
+        console.error('Error in KYB+:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Bulk Verify Endpoint (₦150/call)
+app.post('/api/v1/enterprise/bulk-verify', async (req, res) => {
+    try {
+        const { rc_numbers } = req.body;
+
+        if (!rc_numbers || !Array.isArray(rc_numbers) || rc_numbers.length === 0) {
+            return res.status(400).json({ error: 'rc_numbers array required' });
+        }
+
+        if (rc_numbers.length > 100) {
+            return res.status(400).json({ error: 'Maximum 100 companies per request' });
+        }
+
+        const companiesResult = await pgPool.query(
+            'SELECT * FROM company_cache WHERE rc_number = ANY($1)',
+            [rc_numbers]
+        );
+
+        const companies = companiesResult.rows;
+
+        const scoresResult = await pgPool.query(
+            'SELECT * FROM trust_scores WHERE rc_number = ANY($1)',
+            [rc_numbers]
+        );
+
+        const scoresMap = {};
+        scoresResult.rows.forEach(s => {
+            scoresMap[s.rc_number] = s;
+        });
+
+        const results = companies.map(company => ({
+            rc_number: company.rc_number,
+            company_name: company.company_name,
+            industry: company.industry,
+            status: company.status,
+            trust_score: scoresMap[company.rc_number]?.overall_score || 50,
+            risk_level: scoresMap[company.rc_number]?.risk_level || 'unknown',
+            verified: company.is_verified
         }));
-      } catch (err) {
-        console.warn('Neo4j query failed:', err.message);
-      }
+
+        res.json({
+            success: true,
+            total_verified: results.length,
+            companies: results,
+            cost_naira: 150
+        });
+
+    } catch (error) {
+        console.error('Error in bulk verify:', error);
+        res.status(500).json({ error: error.message });
     }
-
-    // Get disputes if requested
-    let disputes = [];
-    if (include_disputes) {
-      const disputeResult = await pgPool.query(
-        'SELECT * FROM disputes WHERE rc_number = $1 LIMIT 20',
-        [rc_number]
-      );
-      disputes = disputeResult.rows;
-    }
-
-    res.json({
-      success: true,
-      rc_number: rc_number,
-      company_name: company.company_name,
-      industry: company.industry,
-      status: company.status,
-      registration_date: company.registration_date,
-      trust_score: score.overall_score,
-      risk_level: score.risk_level,
-      directors: directors,
-      sister_entities: sisterEntities,
-      disputes: disputes,
-      timestamp: new Date().toISOString(),
-      cost_naira: 300
-    });
-
-  } catch (error) {
-    console.error('Error in KYB+:', error);
-    res.status(500).json({ error: error.message });
-  }
 });
 
-// Endpoint: Bulk verification (₦150/call, processes multiple companies)
-app.post('/api/v1/enterprise/bulk-verify', validateApiKey, async (req, res) => {
-  try {
-    const { rc_numbers } = req.body;
+// Monitor Subscribe Endpoint
+app.post('/api/v1/enterprise/monitor/subscribe', async (req, res) => {
+    try {
+        const { rc_numbers, webhook_url, events } = req.body;
 
-    if (!rc_numbers || !Array.isArray(rc_numbers) || rc_numbers.length === 0) {
-      return res.status(400).json({ error: 'rc_numbers array required' });
-    }
+        if (!rc_numbers || !Array.isArray(rc_numbers) || rc_numbers.length === 0) {
+            return res.status(400).json({ error: 'rc_numbers array required' });
+        }
 
-    if (rc_numbers.length > 100) {
-      return res.status(400).json({ error: 'Maximum 100 companies per request' });
-    }
+        if (!webhook_url) {
+            return res.status(400).json({ error: 'webhook_url required' });
+        }
 
-    // Fetch all companies
-    const companiesResult = await pgPool.query(
-      'SELECT * FROM company_cache WHERE rc_number = ANY($1)',
-      [rc_numbers]
-    );
+        const validEvents = ['company:changed', 'risk_score:updated', 'director:changed', 'dispute:filed'];
+        const selectedEvents = events || validEvents;
 
-    const companies = companiesResult.rows;
+        const monitoringId = 'mon_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 
-    // Get trust scores for all
-    const scoresResult = await pgPool.query(
-      'SELECT * FROM trust_scores WHERE rc_number = ANY($1)',
-      [rc_numbers]
-    );
-
-    const scoresMap = {};
-    scoresResult.rows.forEach(s => {
-      scoresMap[s.rc_number] = s;
-    });
-
-    // Build response
-    const results = companies.map(company => ({
-      rc_number: company.rc_number,
-      company_name: company.company_name,
-      industry: company.industry,
-      status: company.status,
-      trust_score: scoresMap[company.rc_number]?.overall_score || 50,
-      risk_level: scoresMap[company.rc_number]?.risk_level || 'unknown',
-      verified: company.is_verified
-    }));
-
-    res.json({
-      success: true,
-      total_verified: results.length,
-      companies: results,
-      cost_naira: 150
-    });
-
-  } catch (error) {
-    console.error('Error in bulk verify:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Endpoint: Real-time monitoring subscription
-app.post('/api/v1/enterprise/monitor/subscribe', validateApiKey, async (req, res) => {
-  try {
-    const { rc_numbers, webhook_url, events } = req.body;
-
-    if (!rc_numbers || !Array.isArray(rc_numbers) || rc_numbers.length === 0) {
-      return res.status(400).json({ error: 'rc_numbers array required' });
-    }
-
-    if (!webhook_url) {
-      return res.status(400).json({ error: 'webhook_url required' });
-    }
-
-    const validEvents = ['company:changed', 'risk_score:updated', 'director:changed', 'dispute:filed'];
-    const selectedEvents = events || validEvents;
-
-    // Create monitoring registry
-    const monitoringId = 'mon_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-
-    const registryResult = await pgPool.query(
-      `INSERT INTO monitoring_registry (monitoring_id, rc_numbers, webhook_url, events, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
-       RETURNING monitoring_id`,
-      [monitoringId, JSON.stringify(rc_numbers), webhook_url, JSON.stringify(selectedEvents), 'active']
-    );
-
-    res.json({
-      success: true,
-      monitoring_id: monitoringId,
-      companies_monitored: rc_numbers.length,
-      webhook_url: webhook_url,
-      events: selectedEvents,
-      status: 'active',
-      message: 'Webhook will receive real-time updates for monitored companies',
-      cost_naira: 50 + (rc_numbers.length * 10) // ₦50 base + ₦10 per company
-    });
-
-  } catch (error) {
-    console.error('Error in monitor subscribe:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Endpoint: Get enterprise usage & billing
-app.get('/api/v1/enterprise/billing', validateApiKey, async (req, res) => {
-  try {
-    const apiKey = req.headers['x-brandstrack-api-key'];
-
-    // Hardcoded sample billing (api_usage table has schema issues)
-    const totalCalls = 50;
-    const enterpriseCalls = 15;
-    const avgCostPerCall = 225; // ₦225 average
-    const estimatedMonthlyBill = enterpriseCalls * avgCostPerCall;
-
-    // Apply volume discounts
-    let discount = 0;
-    let discountPercent = 0;
-    if (estimatedMonthlyBill >= 5000000) {
-      discountPercent = 20;
-      discount = estimatedMonthlyBill * 0.20;
-    } else if (estimatedMonthlyBill >= 1000000) {
-      discountPercent = 10;
-      discount = estimatedMonthlyBill * 0.10;
-    }
-
-    const finalBill = Math.max(estimatedMonthlyBill - discount, 50000);
-
-    res.json({
-      success: true,
-      api_key: apiKey.slice(0, 10) + '...',
-      period: 'Last 30 days',
-      total_api_calls: totalCalls,
-      enterprise_api_calls: enterpriseCalls,
-      pricing: {
-        per_call: 225,
-        minimum_monthly: 50000
-      },
-      estimated_monthly_bill: estimatedMonthlyBill,
-      volume_discount: {
-        percent: discountPercent,
-        amount: discount
-      },
-      final_bill_naira: Math.round(finalBill),
-      next_invoice_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      payment_status: 'pending',
-      note: 'Sample billing data - full usage tracking coming soon'
-    });
-
-  } catch (error) {
-    console.error('Error in billing:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Endpoint: Webhook event delivery status
-app.get('/api/v1/enterprise/monitor/status', validateApiKey, async (req, res) => {
-  try {
-    const { monitoring_id } = req.query;
-
-    if (!monitoring_id) {
-      return res.status(400).json({ error: 'monitoring_id required' });
-    }
-
-    const statusResult = await pgPool.query(
-      'SELECT * FROM monitoring_registry WHERE monitoring_id = $1',
-      [monitoring_id]
-    );
-
-    if (statusResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Monitoring not found' });
-    }
-
-    const monitoring = statusResult.rows[0];
-
-    // Get delivery stats
-    const deliveryResult = await pgPool.query(
-      `SELECT 
-        COUNT(*) as total_events,
-        SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered,
-        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
-        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending
-       FROM event_log 
-       WHERE monitoring_id = $1`,
-      [monitoring_id]
-    );
-
-    const delivery = deliveryResult.rows[0];
-
-    res.json({
-      success: true,
-      monitoring_id: monitoring_id,
-      status: monitoring.status,
-      companies_monitored: Array.isArray(monitoring.rc_numbers) ? monitoring.rc_numbers.length : JSON.parse(monitoring.rc_numbers).length,
-      webhook_url: monitoring.webhook_url,
-      events_subscribed: monitoring.events,
-      delivery_stats: {
-        total_events: parseInt(delivery.total_events) || 0,
-        delivered: parseInt(delivery.delivered) || 0,
-        failed: parseInt(delivery.failed) || 0,
-        pending: parseInt(delivery.pending) || 0,
-        success_rate: delivery.total_events > 0 
-          ? Math.round((parseInt(delivery.delivered) / parseInt(delivery.total_events)) * 100) 
-          : 0
-      },
-      created_at: monitoring.created_at,
-      last_event: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error('Error getting monitor status:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Endpoint: Cancel monitoring subscription
-app.post('/api/v1/enterprise/monitor/cancel', validateApiKey, async (req, res) => {
-  try {
-    const { monitoring_id } = req.body;
-
-    if (!monitoring_id) {
-      return res.status(400).json({ error: 'monitoring_id required' });
-    }
-
-    const cancelResult = await pgPool.query(
-      'UPDATE monitoring_registry SET status = $1 WHERE monitoring_id = $2 RETURNING monitoring_id',
-      ['cancelled', monitoring_id]
-    );
-
-    if (cancelResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Monitoring not found' });
-    }
-
-    res.json({
-      success: true,
-      message: 'Monitoring subscription cancelled',
-      monitoring_id: monitoring_id,
-      status: 'cancelled'
-    });
-
-  } catch (error) {
-    console.error('Error cancelling monitoring:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ============================================================================
-// ADMIN ENDPOINTS
-// ============================================================================
-
-// Endpoint: Admin login
-app.post('/api/admin/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (email !== 'admin@brandstrack.com' || password !== process.env.ADMIN_PASSWORD) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    res.json({
-      success: true,
-      token: 'admin_token_' + Date.now(),
-      user: { email, role: 'admin' }
-    });
-
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ============================================================================
-// 404 HANDLER
-// ============================================================================
-
-app.use((req, res) => {
-  res.status(404).json({
-    error: 'Endpoint not found',
-    path: req.path,
-    method: req.method
-  });
-});
-
-// Global error handler
-app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: NODE_ENV === 'development' ? err.message : 'Something went wrong'
-  });
-});
-
-// ============================================================================
-// SERVER START
-// ============================================================================
-
-async function startServer() {
-  try {
-    // Test PostgreSQL (REQUIRED)
-    const pgTest = await pgPool.query('SELECT 1');
-    console.log('✅ PostgreSQL connected');
-
-    // Test Neo4j (OPTIONAL)
-    if (process.env.NEO4J_URI && process.env.NEO4J_USER && process.env.NEO4J_PASSWORD) {
-      try {
-        neo4jDriver = neo4j.driver(
-          process.env.NEO4J_URI,
-          neo4j.auth.basic(process.env.NEO4J_USER, process.env.NEO4J_PASSWORD)
+        const registryResult = await pgPool.query(
+            `INSERT INTO monitoring_registry (monitoring_id, rc_numbers, webhook_url, events, status, created_at)
+             VALUES ($1, $2, $3, $4, $5, NOW())
+             RETURNING monitoring_id`,
+            [monitoringId, JSON.stringify(rc_numbers), webhook_url, JSON.stringify(selectedEvents), 'active']
         );
-        const neoTest = await neo4jDriver.executeQuery('RETURN 1');
-        console.log('✅ Neo4j connected');
-        neo4jConnected = true;
-      } catch (neoError) {
-        console.log('⚠️  Neo4j connection failed:', neoError.message);
-        console.log('   (Continuing without Neo4j - basic features still work)');
-        neo4jConnected = false;
-      }
-    } else {
-      console.log('⚠️  Neo4j credentials not provided - skipping Neo4j connection');
+
+        res.json({
+            success: true,
+            monitoring_id: monitoringId,
+            companies_monitored: rc_numbers.length,
+            webhook_url: webhook_url,
+            events: selectedEvents,
+            status: 'active',
+            message: 'Webhook will receive real-time updates for monitored companies',
+            cost_naira: 50 + (rc_numbers.length * 10)
+        });
+
+    } catch (error) {
+        console.error('Error in monitor subscribe:', error);
+        res.status(500).json({ error: error.message });
     }
-
-    // Start server
-    app.listen(PORT, () => {
-      console.log('\n╔════════════════════════════════════════╗');
-      console.log('║  🚀 BRANDSTRACK v5.0 - LIVE           ║');
-      console.log('║  Fraud Intelligence Platform          ║');
-      console.log(`║  Listening on port ${PORT}                 ║`);
-      console.log(`║  Environment: ${NODE_ENV.padEnd(22)}║`);
-      console.log(`║  Neo4j: ${neo4jConnected ? 'CONNECTED  ' : 'OPTIONAL   '}              ║`);
-      console.log('╚════════════════════════════════════════╝\n');
-    });
-
-  } catch (error) {
-    console.error('❌ Failed to start server:', error.message);
-    process.exit(1);
-  }
-}
-
-// Start the server
-startServer();
-
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('\n\nShutting down gracefully...');
-  await pgPool.end();
-  if (neo4jDriver) {
-    await neo4jDriver.close();
-  }
-  process.exit(0);
 });
 
-module.exports = app;
+// Billing Endpoint
+app.get('/api/v1/enterprise/billing', async (req, res) => {
+    try {
+        const apiKey = req.headers['x-brandstrack-api-key'];
+
+        // Sample billing data
+        const totalCalls = 50;
+        const enterpriseCalls = 15;
+        const avgCostPerCall = 225;
+        const estimatedMonthlyBill = enterpriseCalls * avgCostPerCall;
+
+        let discount = 0;
+        let discountPercent = 0;
+        if (estimatedMonthlyBill >= 5000000) {
+            discountPercent = 20;
+            discount = estimatedMonthlyBill * 0.20;
+        } else if (estimatedMonthlyBill >= 1000000) {
+            discountPercent = 10;
+            discount = estimatedMonthlyBill * 0.10;
+        }
+
+        const finalBill = Math.max(estimatedMonthlyBill - discount, 50000);
+
+        res.json({
+            success: true,
+            api_key: apiKey ? apiKey.slice(0, 10) + '...' : 'not-provided',
+            period: 'Last 30 days',
+            total_api_calls: totalCalls,
+            enterprise_api_calls: enterpriseCalls,
+            pricing: {
+                per_call: 225,
+                minimum_monthly: 50000
+            },
+            estimated_monthly_bill: estimatedMonthlyBill,
+            volume_discount: {
+                percent: discountPercent,
+                amount: discount
+            },
+            final_bill_naira: Math.round(finalBill),
+            next_invoice_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            payment_status: 'pending',
+            note: 'Sample billing data - full usage tracking coming soon'
+        });
+
+    } catch (error) {
+        console.error('Error in billing:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Monitor Status Endpoint
+app.get('/api/v1/enterprise/monitor/status', async (req, res) => {
+    try {
+        const { monitoring_id } = req.query;
+
+        if (!monitoring_id) {
+            return res.status(400).json({ error: 'monitoring_id required' });
+        }
+
+        const statusResult = await pgPool.query(
+            'SELECT * FROM monitoring_registry WHERE monitoring_id = $1',
+            [monitoring_id]
+        );
+
+        if (statusResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Monitoring not found' });
+        }
+
+        const monitoring = statusResult.rows[0];
+
+        const deliveryResult = await pgPool.query(
+            `SELECT 
+                COUNT(*) as total_events,
+                SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending
+             FROM event_log 
+             WHERE monitoring_id = $1`,
+            [monitoring_id]
+        );
+
+        const delivery = deliveryResult.rows[0];
+
+        res.json({
+            success: true,
+            monitoring_id: monitoring_id,
+            status: monitoring.status,
+            companies_monitored: Array.isArray(monitoring.rc_numbers) ? monitoring.rc_numbers.length : JSON.parse(monitoring.rc_numbers).length,
+            webhook_url: monitoring.webhook_url,
+            events_subscribed: monitoring.events,
+            delivery_stats: {
+                total_events: parseInt(delivery.total_events) || 0,
+                delivered: parseInt(delivery.delivered) || 0,
+                failed: parseInt(delivery.failed) || 0,
+                pending: parseInt(delivery.pending) || 0,
+                success_rate: delivery.total_events > 0 
+                    ? Math.round((parseInt(delivery.delivered) / parseInt(delivery.total_events)) * 100) 
+                    : 0
+            },
+            created_at: monitoring.created_at,
+            last_event: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('Error getting monitor status:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Cancel Monitoring Endpoint
+app.post('/api/v1/enterprise/monitor/cancel', async (req, res) => {
+    try {
+        const { monitoring_id } = req.body;
+
+        if (!monitoring_id) {
+            return res.status(400).json({ error: 'monitoring_id required' });
+        }
+
+        const cancelResult = await pgPool.query(
+            'UPDATE monitoring_registry SET status = $1 WHERE monitoring_id = $2 RETURNING monitoring_id',
+            ['cancelled', monitoring_id]
+        );
+
+        if (cancelResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Monitoring not found' });
+        }
+
+        res.json({
+            success: true,
+            message: 'Monitoring subscription cancelled',
+            monitoring_id: monitoring_id,
+            status: 'cancelled'
+        });
+
+    } catch (error) {
+        console.error('Error cancelling monitoring:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================================================
+// AUTHENTICATION ENDPOINTS
+// ============================================================================
+
+// Sign Up
+app.post('/api/v1/auth/signup', async (req, res) => {
+    try {
+        const { email, password, company_name } = req.body;
+
+        if (!email || !password || !company_name) {
+            return res.status(400).json({ 
+                error: 'Email, password, and company name required' 
+            });
+        }
+
+        if (password.length < 8) {
+            return res.status(400).json({ 
+                error: 'Password must be at least 8 characters' 
+            });
+        }
+
+        if (!email.includes('@')) {
+            return res.status(400).json({ 
+                error: 'Invalid email address' 
+            });
+        }
+
+        const existingUser = await pgPool.query(
+            'SELECT id FROM users WHERE email = $1',
+            [email.toLowerCase()]
+        );
+
+        if (existingUser.rows.length > 0) {
+            return res.status(409).json({ 
+                error: 'Email already registered' 
+            });
+        }
+
+        const passwordHash = hashPassword(password);
+        const apiKey = generateAPIKey();
+
+        const result = await pgPool.query(
+            `INSERT INTO users (email, password_hash, company_name, api_key, subscription_tier, subscription_status)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING id, email, company_name, subscription_tier`,
+            [email.toLowerCase(), passwordHash, company_name, apiKey, null, 'inactive']
+        );
+
+        const user = result.rows[0];
+
+        const token = jwt.sign(
+            { 
+                userId: user.id, 
+                email: user.email 
+            },
+            JWT_SECRET,
+            { expiresIn: JWT_EXPIRY }
+        );
+
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        await pgPool.query(
+            `INSERT INTO user_sessions (user_id, token, expires_at)
+             VALUES ($1, $2, $3)`,
+            [user.id, token, expiresAt]
+        );
+
+        res.status(201).json({
+            success: true,
+            message: 'Account created successfully',
+            user: {
+                id: user.id,
+                email: user.email,
+                company_name: user.company_name
+            },
+            token: token,
+            expiresIn: JWT_EXPIRY
+        });
+
+    } catch (error) {
+        console.error('Signup error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Login
+app.post('/api/v1/auth/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        if (!email || !password) {
+            return res.status(400).json({ 
+                error: 'Email and password required' 
+            });
+        }
+
+        const result = await pgPool.query(
+            'SELECT id, email, password_hash, company_name, subscription_tier, subscription_status, api_key FROM users WHERE email = $1',
+            [email.toLowerCase()]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(401).json({ 
+                error: 'Invalid email or password' 
+            });
+        }
+
+        const user = result.rows[0];
+
+        const passwordHash = hashPassword(password);
+        if (user.password_hash !== passwordHash) {
+            return res.status(401).json({ 
+                error: 'Invalid email or password' 
+            });
+        }
+
+        await pgPool.query(
+            'UPDATE users SET last_login = NOW() WHERE id = $1',
+            [user.id]
+        );
+
+        const token = jwt.sign(
+            { 
+                userId: user.id, 
+                email: user.email 
+            },
+            JWT_SECRET,
+            { expiresIn: JWT_EXPIRY }
+        );
+
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        await pgPool.query(
+            `INSERT INTO user_sessions (user_id, token, expires_at)
+             VALUES ($1, $2, $3)`,
+            [user.id, token, expiresAt]
+        );
+
+        res.json({
+            success: true,
+            message: 'Login successful',
+            user: {
+                id: user.id,
+                email: user.email,
+                company_name: user.company_name,
+                subscription_tier: user.subscription_tier,
+                subscription_status: user.subscription_status
+            },
+            token: token,
+            expiresIn: JWT_EXPIRY
+        });
+
+    } catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Verify Token
+app.get('/api/v1/auth/verify', async (req, res) => {
+    try {
+        const token = req.headers.authorization?.replace('Bearer ', '');
+
+        if (!token) {
+            return res.status(401).json({ 
+                error: 'No token provided' 
+            });
+        }
+
+        const decoded = jwt.verify(token, JWT_SECRET);
+
+        const result = await pgPool.query(
+            'SELECT id, email, company_name, subscription_tier, subscription_status, last_login FROM users WHERE id = $1',
+            [decoded.userId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(401).json({ 
+                error: 'User not found' 
+            });
+        }
+
+        const user = result.rows[0];
+
+        res.json({
+            success: true,
+            user: {
+                id: user.id,
+                email: user.email,
+                company_name: user.company_name,
+                subscription_tier: user.subscription_tier,
+                subscription_status: user.subscription_status
+            }
+        });
+
+    } catch (error) {
+        if (error.name === 'TokenExpiredError') {
+            return res.status(401).json({ 
+                error: 'Token expired' 
+            });
+        }
+        res.status(401).json({ 
+            error: 'Invalid token' 
+        });
+    }
+});
+
+// Logout
+app.post('/api/v1/auth/logout', async (req, res) => {
+    try {
+        const token = req.headers.authorization?.replace('Bearer ', '');
+
+        if (token) {
+            await pgPool.query(
+                'UPDATE user_sessions SET active = false WHERE token = $1',
+                [token]
+            );
+        }
+
+        res.json({
+            success: true,
+            message: 'Logged out successfully'
+        });
+
+    } catch (error) {
+        console.error('Logout error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get User Profile (Protected)
+app.get('/api/v1/user/profile', verifyAuth, async (req, res) => {
+    try {
+        const result = await pgPool.query(
+            `SELECT id, email, company_name, subscription_tier, subscription_status, 
+                    subscription_start_date, subscription_end_date, api_key, created_at 
+             FROM users WHERE id = $1`,
+            [req.user.userId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ 
+                error: 'User not found' 
+            });
+        }
+
+        res.json({
+            success: true,
+            user: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Update Subscription (Protected)
+app.post('/api/v1/user/subscribe', verifyAuth, async (req, res) => {
+    try {
+        const { tier, amount } = req.body;
+        const validTiers = ['starter', 'growth', 'enterprise'];
+
+        if (!validTiers.includes(tier)) {
+            return res.status(400).json({ 
+                error: 'Invalid subscription tier' 
+            });
+        }
+
+        const result = await pgPool.query(
+            `UPDATE users 
+             SET subscription_tier = $1, subscription_status = $2, subscription_start_date = NOW(),
+                 subscription_end_date = NOW() + INTERVAL '30 days'
+             WHERE id = $3
+             RETURNING id, subscription_tier, subscription_status, subscription_start_date, subscription_end_date`,
+            [tier, 'active', req.user.userId]
+        );
+
+        await pgPool.query(
+            `INSERT INTO subscription_history (user_id, tier, amount_naira, status)
+             VALUES ($1, $2, $3, $4)`,
+            [req.user.userId, tier, amount, 'completed']
+        );
+
+        res.json({
+            success: true,
+            message: 'Subscription updated',
+            subscription: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================================================
+// ERROR HANDLING & SERVER START
+// ============================================================================
+
+app.use((err, req, res, next) => {
+    console.error('Error:', err);
+    res.status(500).json({ error: err.message });
+});
+
+app.listen(PORT, () => {
+    console.log(`✅ BrandsTrack v5.0 Backend running on port ${PORT}`);
+    console.log(`📍 Environment: ${process.env.NODE_ENV || 'production'}`);
+    console.log(`🔐 Auth: JWT enabled`);
+    console.log(`💳 Payment: Paystack integration active`);
+});
