@@ -28,7 +28,7 @@
     "axios": "^1.6.5",
     "node-cron": "^3.0.2",
     "neo4j-driver": "^5.14.0",
-    "jsonwebtoken": "^9.1.2"
+    "jsonwebtoken": "^9.0.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
