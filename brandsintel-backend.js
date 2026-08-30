@@ -1,5 +1,5 @@
 // ============================================================================
-// BRANDSTRACK v5.0 BACKEND - COMPLETE WITH AUTHENTICATION
+// BRANDSTRACK v5.0 BACKEND - COMPLETE WITH AUTHENTICATION & ADMIN PRICING
 // ============================================================================
 
 require('dotenv').config();
@@ -77,6 +77,28 @@ function verifyAuth(req, res, next) {
         res.status(401).json({ 
             error: 'Invalid or expired token' 
         });
+    }
+}
+
+// Admin Middleware: Check if user is admin
+async function checkAdmin(req, res, next) {
+    try {
+        const adminResult = await pgPool.query(
+            'SELECT * FROM admin_users WHERE user_id = $1 AND is_active = true',
+            [req.user.userId]
+        );
+
+        if (adminResult.rows.length === 0) {
+            return res.status(403).json({ 
+                error: 'Admin access required' 
+            });
+        }
+
+        req.admin = adminResult.rows[0];
+        next();
+
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 }
 
@@ -599,6 +621,185 @@ app.post('/api/v1/enterprise/monitor/cancel', async (req, res) => {
 });
 
 // ============================================================================
+// ADMIN ENDPOINTS - PRICING MANAGEMENT
+// ============================================================================
+
+// GET ALL PRICING TIERS (Public - for customer site)
+app.get('/api/v1/pricing/tiers', async (req, res) => {
+    try {
+        const result = await pgPool.query(
+            `SELECT 
+                id, tier_key, tier_name, tier_description, 
+                monthly_price_naira, monthly_checks, features, display_order
+             FROM pricing_tiers 
+             WHERE is_active = true 
+             ORDER BY display_order ASC`
+        );
+
+        res.json({
+            success: true,
+            tiers: result.rows
+        });
+
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// GET SINGLE PRICING TIER
+app.get('/api/v1/pricing/tiers/:tier_key', async (req, res) => {
+    try {
+        const { tier_key } = req.params;
+
+        const result = await pgPool.query(
+            `SELECT * FROM pricing_tiers 
+             WHERE tier_key = $1 AND is_active = true`,
+            [tier_key]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Tier not found' });
+        }
+
+        res.json({
+            success: true,
+            tier: result.rows[0]
+        });
+
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ADMIN: UPDATE PRICING TIER (Protected - Admin Only)
+app.put('/api/v1/admin/pricing/tiers/:tier_key', verifyAuth, checkAdmin, async (req, res) => {
+    try {
+        const { tier_key } = req.params;
+        const { tier_name, tier_description, monthly_price_naira, monthly_checks, features } = req.body;
+
+        if (!tier_name || monthly_price_naira === undefined || monthly_checks === undefined) {
+            return res.status(400).json({ 
+                error: 'tier_name, monthly_price_naira, and monthly_checks required' 
+            });
+        }
+
+        const result = await pgPool.query(
+            `UPDATE pricing_tiers 
+             SET tier_name = $1, 
+                 tier_description = $2, 
+                 monthly_price_naira = $3, 
+                 monthly_checks = $4,
+                 features = $5,
+                 updated_at = NOW(),
+                 updated_by = $6
+             WHERE tier_key = $7
+             RETURNING *`,
+            [
+                tier_name,
+                tier_description || null,
+                monthly_price_naira,
+                monthly_checks,
+                features ? JSON.stringify(features) : '[]',
+                req.user.userId,
+                tier_key
+            ]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Tier not found' });
+        }
+
+        res.json({
+            success: true,
+            message: 'Pricing tier updated successfully',
+            tier: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ADMIN: GET ALL PRICING TIERS (Including Inactive) (Protected - Admin Only)
+app.get('/api/v1/admin/pricing/tiers', verifyAuth, checkAdmin, async (req, res) => {
+    try {
+        const result = await pgPool.query(
+            `SELECT * FROM pricing_tiers 
+             ORDER BY display_order ASC`
+        );
+
+        res.json({
+            success: true,
+            tiers: result.rows
+        });
+
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ADMIN: DELETE PRICING TIER (Protected - Admin Only)
+app.delete('/api/v1/admin/pricing/tiers/:tier_key', verifyAuth, checkAdmin, async (req, res) => {
+    try {
+        const { tier_key } = req.params;
+
+        // Soft delete - set is_active to false
+        const result = await pgPool.query(
+            `UPDATE pricing_tiers 
+             SET is_active = false, updated_at = NOW(), updated_by = $1
+             WHERE tier_key = $2
+             RETURNING *`,
+            [req.user.userId, tier_key]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Tier not found' });
+        }
+
+        res.json({
+            success: true,
+            message: 'Pricing tier deleted successfully',
+            tier: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ADMIN: GET ADMIN INFO (Protected - Admin Only)
+app.get('/api/v1/admin/info', verifyAuth, checkAdmin, async (req, res) => {
+    try {
+        const result = await pgPool.query(
+            `SELECT 
+                au.id, au.user_id, au.role, au.permissions, au.is_active,
+                u.email, u.company_name, u.created_at
+             FROM admin_users au
+             JOIN users u ON au.user_id = u.id
+             WHERE au.user_id = $1`,
+            [req.user.userId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Admin not found' });
+        }
+
+        res.json({
+            success: true,
+            admin: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================================================
 // AUTHENTICATION ENDPOINTS
 // ============================================================================
 
@@ -906,4 +1107,5 @@ app.listen(PORT, () => {
     console.log(`📍 Environment: ${process.env.NODE_ENV || 'production'}`);
     console.log(`🔐 Auth: JWT enabled`);
     console.log(`💳 Payment: Paystack integration active`);
+    console.log(`⚙️ Admin: Pricing management enabled`);
 });
